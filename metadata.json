@@ -1,0 +1,6 @@
+{
+  "name": "Audio Spectrum Analyzer",
+  "description": "Real-time audio spectrum analyzer built with React and Web Audio API featuring frequency analysis, custom visualizers, file upload, mic input, and customizable color gradients.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
