@@ -2,17 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Timer, 
   Sparkles, 
-  Volume2, 
   Play, 
-  Square, 
-  HelpCircle, 
-  Building2, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Zap, 
-  RefreshCw,
-  Award,
-  Layers
+  Building2 
 } from 'lucide-react';
 import { AudioMetrics } from '../types';
 

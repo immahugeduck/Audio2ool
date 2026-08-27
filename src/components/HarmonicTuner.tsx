@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
 import { 
-  Sliders, 
-  Activity, 
   Music, 
-  Zap, 
-  Sparkles, 
   Layers, 
-  Info,
-  Radio,
   Power
 } from 'lucide-react';
 import { AudioMetrics } from '../types';

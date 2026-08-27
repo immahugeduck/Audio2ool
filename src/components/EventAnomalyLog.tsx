@@ -7,11 +7,8 @@ import {
   Download, 
   Tag, 
   Clock, 
-  Zap, 
-  Filter, 
   Check, 
-  Copy,
-  Info
+  Copy
 } from 'lucide-react';
 import { AudioMetrics } from '../types';
 

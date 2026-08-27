@@ -13,9 +13,7 @@ import {
   Trash2, 
   Eye, 
   EyeOff, 
-  X,
-  Activity,
-  Zap
+  X
 } from 'lucide-react';
 
 interface SpectrumLayer {
@@ -235,7 +233,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       ctx.scale(dpr, dpr);
 
       // Deep studio dark background
-      ctx.fillStyle = '#090d16';
+      ctx.fillStyle = '#020408';
       ctx.fillRect(0, 0, width, height);
 
       // Fetch raw data
@@ -756,7 +754,190 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       }
 
       // -------------------------------------------------------------
-      // OSCILLOSCOPE / WAVEFORM MODE
+      // OSCILLOSCOPE (CONTINUOUS NEON TIME-DOMAIN BEAM & RETICLE)
+      // -------------------------------------------------------------
+      else if (settings.mode === 'oscilloscope') {
+        const centerY = height / 2 - 15;
+        const availableHeight = height - 70;
+
+        // 1. Draw Laboratory CRT Oscilloscope Reticle Grid
+        if (settings.showDbGrid) {
+          ctx.save();
+          const gridCols = 10;
+          const gridRows = 8;
+          const colWidth = width / gridCols;
+          const rowHeight = (height - 50) / gridRows;
+
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.12)';
+          ctx.lineWidth = 1;
+
+          // Vertical grid lines
+          for (let c = 1; c < gridCols; c++) {
+            const gx = c * colWidth;
+            ctx.beginPath();
+            ctx.moveTo(gx, 10);
+            ctx.lineTo(gx, height - 40);
+            ctx.stroke();
+          }
+
+          // Horizontal grid lines
+          for (let r = 1; r < gridRows; r++) {
+            const gy = 10 + r * rowHeight;
+            ctx.beginPath();
+            ctx.moveTo(0, gy);
+            ctx.lineTo(width, gy);
+            ctx.stroke();
+          }
+
+          // Center Crosshair Axis with Graduation Ticks
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.28)';
+          ctx.lineWidth = 1.2;
+
+          // Center Horizontal Axis
+          ctx.beginPath();
+          ctx.moveTo(0, centerY);
+          ctx.lineTo(width, centerY);
+          ctx.stroke();
+
+          // Center Vertical Axis
+          const centerX = width / 2;
+          ctx.beginPath();
+          ctx.moveTo(centerX, 10);
+          ctx.lineTo(centerX, height - 40);
+          ctx.stroke();
+
+          // Horizontal Axis Sub-ticks
+          const subTickSpacing = colWidth / 5;
+          for (let tx = 0; tx <= width; tx += subTickSpacing) {
+            ctx.beginPath();
+            ctx.moveTo(tx, centerY - 3);
+            ctx.lineTo(tx, centerY + 3);
+            ctx.stroke();
+          }
+
+          // Vertical Axis Sub-ticks
+          const vSubTickSpacing = rowHeight / 5;
+          for (let ty = 10; ty <= height - 40; ty += vSubTickSpacing) {
+            ctx.beginPath();
+            ctx.moveTo(centerX - 3, ty);
+            ctx.lineTo(centerX + 3, ty);
+            ctx.stroke();
+          }
+
+          // Zero-Volt Channel Marker Flags on left and right edges
+          ctx.fillStyle = preset.colors[0] || '#00f0ff';
+          ctx.beginPath();
+          ctx.moveTo(0, centerY - 6);
+          ctx.lineTo(10, centerY);
+          ctx.lineTo(0, centerY + 6);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.moveTo(width, centerY - 6);
+          ctx.lineTo(width - 10, centerY);
+          ctx.lineTo(width, centerY + 6);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.restore();
+        }
+
+        // 2. Trigger Stabilization (Find positive slope zero-crossing)
+        let triggerIndex = 0;
+        const searchLimit = Math.min(timeData.length / 2, 200);
+        for (let i = 0; i < searchLimit; i++) {
+          if (timeData[i] < 128 && timeData[i + 1] >= 128) {
+            triggerIndex = i;
+            break;
+          }
+        }
+
+        // 3. Compute continuous waveform points
+        const numSamples = Math.min(timeData.length - triggerIndex, 512);
+        const points: { x: number; y: number }[] = [];
+        let minVal = 255;
+        let maxVal = 0;
+
+        for (let i = 0; i < numSamples; i++) {
+          const raw = timeData[triggerIndex + i];
+          if (raw < minVal) minVal = raw;
+          if (raw > maxVal) maxVal = raw;
+
+          const normalized = (raw - 128) / 128.0; // -1.0 to +1.0
+          const amplified = normalized * settings.sensitivity;
+          const y = centerY - (amplified * (availableHeight / 2.2));
+          const x = (i / (numSamples - 1)) * width;
+          points.push({ x, y });
+        }
+
+        if (points.length > 1) {
+          const beamColor = preset.colors[0] || '#00ff66';
+
+          // Pass 1: Wide diffuse phosphor bloom
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+          }
+          ctx.strokeStyle = beamColor;
+          ctx.lineWidth = 6;
+          ctx.globalAlpha = 0.25;
+          ctx.stroke();
+
+          // Pass 2: Main glowing neon beam with intense shadow glow
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+          }
+          ctx.strokeStyle = beamColor;
+          ctx.lineWidth = 2.8;
+          ctx.globalAlpha = 0.95;
+          ctx.shadowColor = preset.glowColor || beamColor;
+          ctx.shadowBlur = 16;
+          ctx.stroke();
+
+          // Pass 3: Intense hot-white electron beam core
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 1; i < points.length; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+          }
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.0;
+          ctx.globalAlpha = 0.9;
+          ctx.shadowBlur = 0;
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // 4. Oscilloscope HUD Telemetry Box
+        ctx.save();
+        ctx.fillStyle = 'rgba(5, 10, 20, 0.85)';
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(14, 14, 220, 52, 8);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = preset.colors[0] || '#00f0ff';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`CH1: 500 mV/DIV (AC)`, 24, 30);
+
+        const vppEstimated = Math.max(0, ((maxVal - minVal) / 255) * 2.0).toFixed(2);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '10px monospace';
+        ctx.fillText(`Vpp: ${vppEstimated}V | TRIG: AUTO ↗`, 24, 44);
+        ctx.fillText(`TIME: 1.0 ms/div | SENS: ${settings.sensitivity.toFixed(1)}x`, 24, 57);
+        ctx.restore();
+      }
+
+      // -------------------------------------------------------------
+      // WAVEFORM TIME-DOMAIN MODE
       // -------------------------------------------------------------
       else if (settings.mode === 'waveform') {
         ctx.beginPath();

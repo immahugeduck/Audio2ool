@@ -1,6 +1,6 @@
 import React from 'react';
-import { Play, Pause, Volume2, VolumeX, Mic, Music, Upload, RotateCcw, Radio, Youtube, Headphones, Smartphone, Check } from 'lucide-react';
-import { AudioEngineState, AudioSourceType } from '../types';
+import { Play, Pause, Volume2, VolumeX, Mic, Music, Upload, Radio, Youtube, Headphones, Smartphone } from 'lucide-react';
+import { AudioEngineState } from '../types';
 import { SAMPLE_TRACKS } from '../utils/audioPresets';
 
 interface AudioControlsProps {

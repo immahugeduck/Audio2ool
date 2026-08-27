@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Sparkles, Mic, MicOff, RefreshCw, Volume2, History, AlertCircle, Cpu, Zap, Radio, CheckCircle2 } from 'lucide-react';
+import { Sparkles, Mic, RefreshCw, History, AlertCircle, Cpu, Zap, Radio, CheckCircle2 } from 'lucide-react';
 import { AudioEngineState, AudioMetrics, AiNoiseDetectionResult } from '../types';
 
 interface AiNoiseDetectorProps {

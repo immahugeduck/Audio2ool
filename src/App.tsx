@@ -111,6 +111,8 @@ export default function App() {
           <Header
             sourceType={engineState.sourceType}
             metrics={metrics}
+            activeTab={activeTab}
+            onSelectTab={setActiveTab}
             onOpenGuide={() => setIsGuideOpen(true)}
             onOpenReport={() => setIsReportOpen(true)}
           />
@@ -124,190 +126,183 @@ export default function App() {
             isPlaying={engineState.isPlaying}
           />
 
-          {/* Premium Tab Bar Navigation */}
-          <div className="flex bg-slate-900 border border-slate-800 p-1.5 rounded-2xl gap-2 shadow-lg self-center md:self-stretch">
-            <button
-              onClick={() => setActiveTab('live')}
-              id="tab-btn-live-space"
-              className={`flex-1 py-3 px-4 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2.5 transition-all cursor-pointer ${
-                activeTab === 'live'
-                  ? 'bg-gradient-to-r from-rose-500/20 to-pink-500/20 border border-rose-500/50 text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.15)]'
-                  : 'text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-850'
-              }`}
-            >
-              <Mic className={`w-4 h-4 ${activeTab === 'live' ? 'text-rose-400 animate-pulse' : 'text-slate-400'}`} />
-              <span>🎙️ Live Acoustic Space Analyzer</span>
-            </button>
-            
-            <button
-              onClick={() => setActiveTab('media')}
-              id="tab-btn-media-analyzer"
-              className={`flex-1 py-3 px-4 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2.5 transition-all cursor-pointer ${
-                activeTab === 'media'
-                  ? 'bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/50 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
-                  : 'text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-850'
-              }`}
-            >
-              <Music className={`w-4 h-4 ${activeTab === 'media' ? 'text-cyan-400 animate-pulse' : 'text-slate-400'}`} />
-              <span>🎵 File & YouTube Stream Analyzer</span>
-            </button>
+          {/* ============================================================== */}
+          {/* GRAPH & VIEW CONTROLS (DIRECTLY UNDERNEATH VISUALIZER) */}
+          {/* ============================================================== */}
+          <div className="flex flex-col gap-5">
+            {/* Visualizer Mode & Parameter Controls */}
+            <VisualizerControls settings={settings} updateSettings={updateSettings} />
+
+            {/* Neon Palettes & Custom Gradient Designer */}
+            <ColorGradientPicker settings={settings} updateSettings={updateSettings} />
+
+            {/* Multi-Band VU & Precision RMS / Peak Telemetry */}
+            <AudioMeters metrics={metrics} />
           </div>
 
-          {/* Responsive Dashboard Grid */}
-          <main className="flex flex-col gap-6">
+          {/* ============================================================== */}
+          {/* TWO-PAGE EQUIPMENT WORKSPACE */}
+          {/* ============================================================== */}
+          <main className="flex flex-col gap-6 pt-2">
             
-            {/* TAB 1: LIVE ACOUSTIC SPACE MONITORING */}
+            {/* PAGE 1: LIVE MIC & ACOUSTIC STUDIO EQUIPMENT */}
             {activeTab === 'live' && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fadeIn">
-                
-                {/* Left Primary Space (Calibration, RT60 & Timeline Graphs) */}
-                <div className="lg:col-span-8 flex flex-col gap-6">
-                  {/* 1. Custom Mic & Bluetooth Device Selector Settings */}
-                  <MicSettingsSelector
-                    engineState={engineState}
-                    enableMicrophone={enableMicrophone}
-                    toggleMicMonitoring={toggleMicMonitoring}
-                    metrics={metrics}
-                  />
-
-                  {/* 2. Background Noise Baseline (Calibrate Room - Runs Default) */}
-                  <NoiseBaselineMonitor
-                    profile={profile}
-                    metrics={metrics}
-                    isCalibrating={isCalibrating}
-                    startCalibration={startCalibration}
-                    resetTransients={resetTransients}
-                    isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
-                  />
-
-                  {/* 3. Room Acoustic Response (RT60 decay - Runs Default) */}
-                  <AcousticRoomRt60
-                    metrics={metrics}
-                    isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
-                    getFrequencyData={getFrequencyData}
-                  />
-
-                  {/* 4. Room Continuous Sound Timeline Profiler (Runs Default) */}
-                  <SoundTimelineProfiler
-                    metrics={metrics}
-                    isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
-                    getFrequencyData={getFrequencyData}
-                  />
+              <div className="flex flex-col gap-6 animate-fadeIn">
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-2 text-sm font-bold text-rose-300">
+                    <Mic className="w-4 h-4 text-rose-400" />
+                    <span>LIVE ACOUSTIC HARDWARE & DIAGNOSTIC EQUIPMENT</span>
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono">Microphone Channel & Room Acoustics</span>
                 </div>
 
-                {/* Right Secondary Space (AI classification, Logs, and UI Color Tools) */}
-                <div className="lg:col-span-4 flex flex-col gap-6">
-                  {/* 1. AI Live Mic Classifier & Sound Guesser */}
-                  <AiNoiseDetector
-                    engineState={engineState}
-                    metrics={metrics}
-                    enableMicrophone={enableMicrophone}
-                    onDetectResult={setLatestAiResult}
-                  />
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Left Column (Hardware & Room Acoustics) */}
+                  <div className="lg:col-span-6 flex flex-col gap-6">
+                    {/* 1. Hardware Mic & Device Selector */}
+                    <MicSettingsSelector
+                      engineState={engineState}
+                      enableMicrophone={enableMicrophone}
+                      toggleMicMonitoring={toggleMicMonitoring}
+                      metrics={metrics}
+                    />
 
-                  {/* 2. Harmonic Pitch Tuner */}
-                  <HarmonicTuner
-                    metrics={metrics}
-                    getFrequencyData={getFrequencyData}
-                  />
+                    {/* 2. Room Noise Floor Baseline & SNR Monitor */}
+                    <NoiseBaselineMonitor
+                      profile={profile}
+                      metrics={metrics}
+                      isCalibrating={isCalibrating}
+                      startCalibration={startCalibration}
+                      resetTransients={resetTransients}
+                      isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
+                    />
 
-                  {/* 3. Live Sound Event & Anomaly Log */}
-                  <EventAnomalyLog
-                    metrics={metrics}
-                    currentTime={engineState.currentTime}
-                    isPlaying={engineState.isPlaying || engineState.sourceType === 'mic'}
-                  />
+                    {/* 3. Room Acoustic RT60 Reverb Decay Measurement */}
+                    <AcousticRoomRt60
+                      metrics={metrics}
+                      isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
+                      getFrequencyData={getFrequencyData}
+                    />
 
-                  {/* 4. Live Voice Transcription Panel */}
-                  <TranscriptionPanel
-                    mediaStreamDestinationRef={mediaStreamDestinationRef}
-                    engineState={engineState}
-                    loadedFile={loadedFile}
-                  />
-
-                  {/* 5. Tweak Canvas Visual Parameters & Modes */}
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-md">
-                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                      <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
-                      Visual Scale Options
-                    </h3>
-                    <VisualizerControls settings={settings} updateSettings={updateSettings} />
+                    {/* 4. Live Voice & Speech Transcription Panel */}
+                    <TranscriptionPanel
+                      mediaStreamDestinationRef={mediaStreamDestinationRef}
+                      engineState={engineState}
+                      loadedFile={loadedFile}
+                    />
                   </div>
 
-                  {/* 6. Color Schemes & Gradient Designer */}
-                  <ColorGradientPicker settings={settings} updateSettings={updateSettings} />
+                  {/* Right Column (AI Intelligence, Pitch Tuning & Anomaly Tracking) */}
+                  <div className="lg:col-span-6 flex flex-col gap-6">
+                    {/* 1. AI Real-Time Sound Classifier */}
+                    <AiNoiseDetector
+                      engineState={engineState}
+                      metrics={metrics}
+                      enableMicrophone={enableMicrophone}
+                      onDetectResult={setLatestAiResult}
+                    />
 
-                  {/* 7. Live Telemetry & Gauges */}
-                  <AudioMeters metrics={metrics} />
+                    {/* 2. Harmonic Musical Tuner & Fundamental Pitch */}
+                    <HarmonicTuner
+                      metrics={metrics}
+                      getFrequencyData={getFrequencyData}
+                    />
+
+                    {/* 3. Sound Timeline Energy Profiler */}
+                    <SoundTimelineProfiler
+                      metrics={metrics}
+                      isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
+                      getFrequencyData={getFrequencyData}
+                    />
+
+                    {/* 4. Sound Event & Transient Anomaly Log */}
+                    <EventAnomalyLog
+                      metrics={metrics}
+                      currentTime={engineState.currentTime}
+                      isPlaying={engineState.isPlaying || engineState.sourceType === 'mic'}
+                    />
+                  </div>
                 </div>
-
               </div>
             )}
 
-            {/* TAB 2: PLAYBACK MEDIA & STREAM ANALYZER */}
+            {/* PAGE 2: MEDIA FILE, URL STREAM & PLAYBACK EQUIPMENT */}
             {activeTab === 'media' && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fadeIn">
-                
-                {/* Left Primary Space (Files & Control Playback decks) */}
-                <div className="lg:col-span-8 flex flex-col gap-6">
-                  {/* 1. YouTube Extraction & Direct URL Streaming */}
-                  <UrlAudioAnalyzer
-                    engineState={engineState}
-                    loadAudioFromUrl={loadAudioFromUrl}
-                    loadSampleTrack={loadSampleTrack}
-                    enableMicrophone={enableMicrophone}
-                    play={play}
-                    pause={pause}
-                  />
-
-                  {/* 2. Core Playback Slider & Audio Decks */}
-                  <AudioControls
-                    engineState={engineState}
-                    play={play}
-                    pause={pause}
-                    seek={seek}
-                    setVolume={setVolume}
-                    toggleMute={toggleMute}
-                    loadSampleTrack={loadSampleTrack}
-                    loadAudioFile={loadAudioFile}
-                    enableMicrophone={enableMicrophone}
-                    toggleMicMonitoring={toggleMicMonitoring}
-                  />
-
-                  {/* 3. Graphic Equalizer & Spatial Panner Panel */}
-                  <EqualizerPanel
-                    engineState={engineState}
-                    setEq={setEq}
-                    setPlaybackRate={setPlaybackRate}
-                    setPan={setPan}
-                  />
+              <div className="flex flex-col gap-6 animate-fadeIn">
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-2 text-sm font-bold text-cyan-300">
+                    <Music className="w-4 h-4 text-cyan-400" />
+                    <span>MEDIA FILE & DIRECT URL STREAMING EQUIPMENT</span>
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono">Audio Deck, EQ & Media Analysis</span>
                 </div>
 
-                {/* Right Secondary Space (Voice transcript & Styling controls) */}
-                <div className="lg:col-span-4 flex flex-col gap-6">
-                  {/* 1. File Speech-to-Text Transcription Panel */}
-                  <TranscriptionPanel
-                    mediaStreamDestinationRef={mediaStreamDestinationRef}
-                    engineState={engineState}
-                    loadedFile={loadedFile}
-                  />
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Left Column (Playback Deck, URL Analyzer, Equalizer) */}
+                  <div className="lg:col-span-6 flex flex-col gap-6">
+                    {/* 1. Direct URL & YouTube Audio Streamer */}
+                    <UrlAudioAnalyzer
+                      engineState={engineState}
+                      loadAudioFromUrl={loadAudioFromUrl}
+                      loadSampleTrack={loadSampleTrack}
+                      enableMicrophone={enableMicrophone}
+                      play={play}
+                      pause={pause}
+                    />
 
-                  {/* 2. Tweak Canvas Visual Parameters & Modes */}
-                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-md">
-                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                      <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
-                      Visual Scale Options
-                    </h3>
-                    <VisualizerControls settings={settings} updateSettings={updateSettings} />
+                    {/* 2. Precision Transport & Track Deck */}
+                    <AudioControls
+                      engineState={engineState}
+                      play={play}
+                      pause={pause}
+                      seek={seek}
+                      setVolume={setVolume}
+                      toggleMute={toggleMute}
+                      loadSampleTrack={loadSampleTrack}
+                      loadAudioFile={loadAudioFile}
+                      enableMicrophone={enableMicrophone}
+                      toggleMicMonitoring={toggleMicMonitoring}
+                    />
+
+                    {/* 3. 10-Band Graphic Equalizer, Spatial Panner & Speed */}
+                    <EqualizerPanel
+                      engineState={engineState}
+                      setEq={setEq}
+                      setPlaybackRate={setPlaybackRate}
+                      setPan={setPan}
+                    />
                   </div>
 
-                  {/* 3. Color Schemes & Gradient Designer */}
-                  <ColorGradientPicker settings={settings} updateSettings={updateSettings} />
+                  {/* Right Column (Transcription, Profiling, Harmonics & Anomaly Tracker) */}
+                  <div className="lg:col-span-6 flex flex-col gap-6">
+                    {/* 1. Media Speech Transcription Panel */}
+                    <TranscriptionPanel
+                      mediaStreamDestinationRef={mediaStreamDestinationRef}
+                      engineState={engineState}
+                      loadedFile={loadedFile}
+                    />
 
-                  {/* 4. Live Telemetry & Gauges */}
-                  <AudioMeters metrics={metrics} />
+                    {/* 2. Media Harmonic Pitch & Key Detection */}
+                    <HarmonicTuner
+                      metrics={metrics}
+                      getFrequencyData={getFrequencyData}
+                    />
+
+                    {/* 3. Media Sound Timeline & Energy Profiler */}
+                    <SoundTimelineProfiler
+                      metrics={metrics}
+                      isListening={engineState.sourceType === 'file' || engineState.sourceType === 'sample' || engineState.isPlaying}
+                      getFrequencyData={getFrequencyData}
+                    />
+
+                    {/* 4. Playback Peak & Transient Anomaly Log */}
+                    <EventAnomalyLog
+                      metrics={metrics}
+                      currentTime={engineState.currentTime}
+                      isPlaying={engineState.isPlaying}
+                    />
+                  </div>
                 </div>
-
               </div>
             )}
 

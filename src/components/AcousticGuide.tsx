@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookOpen, HelpCircle, Waves, AlertTriangle, Info, Check, Search, X, Sliders, Volume2, ShieldAlert } from 'lucide-react';
+import { BookOpen, Waves, AlertTriangle, Info, Search, X } from 'lucide-react';
 
 interface AcousticGuideProps {
   isOpen: boolean;

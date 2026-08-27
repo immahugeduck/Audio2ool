@@ -6,18 +6,14 @@ import {
   Volume2, 
   Clock, 
   TrendingUp, 
-  Info, 
   Compass, 
-  HelpCircle, 
   Trash2, 
-  CheckCircle2, 
   Radio, 
   Zap,
-  ChevronRight,
+  Info,
   Sparkles
 } from 'lucide-react';
 import { AudioMetrics } from '../types';
-import { noteToString } from '../utils/audioPresets';
 
 interface SoundTimelineProfilerProps {
   metrics: AudioMetrics;

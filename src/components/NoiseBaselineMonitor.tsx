@@ -1,5 +1,5 @@
 import React from 'react';
-import { VolumeX, ShieldAlert, Sliders, RefreshCw, Activity, CheckCircle2, Zap, BarChart2 } from 'lucide-react';
+import { VolumeX, Sliders, RefreshCw, Activity, CheckCircle2, Zap, BarChart2 } from 'lucide-react';
 import { NoiseBaselineProfile, AudioMetrics } from '../types';
 
 interface NoiseBaselineMonitorProps {

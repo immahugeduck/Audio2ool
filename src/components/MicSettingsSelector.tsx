@@ -23,7 +23,6 @@ export const MicSettingsSelector: React.FC<MicSettingsSelectorProps> = ({
     micMonitoring,
     isBluetoothConnected,
     bluetoothDeviceName,
-    phoneMicDeviceName,
   } = engineState;
 
   // Handle device change from select dropdown

@@ -1,7 +1,7 @@
 import React from 'react';
 import { AudioEngineState } from '../types';
 import { EQ_PRESETS } from '../utils/audioPresets';
-import { SlidersHorizontal, RotateCcw, FastForward, Compass, Sliders } from 'lucide-react';
+import { SlidersHorizontal, RotateCcw, FastForward, Compass } from 'lucide-react';
 
 interface EqualizerPanelProps {
   engineState: AudioEngineState;

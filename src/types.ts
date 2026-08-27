@@ -1,4 +1,4 @@
-export type VisualizationMode = 'bars' | 'curve' | 'waterfall' | 'spectrogram' | 'waveform' | 'hybrid';
+export type VisualizationMode = 'bars' | 'curve' | 'oscilloscope' | 'waterfall' | 'spectrogram' | 'waveform' | 'hybrid';
 
 export type AudioSourceType = 'sample' | 'file' | 'mic' | 'url';
 

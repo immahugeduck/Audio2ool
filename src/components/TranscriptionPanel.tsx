@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Mic, Square, FileText, Loader2, Play, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Mic, Square, FileText, Loader2, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
 import { AudioEngineState } from '../types';
 
 interface TranscriptionPanelProps {

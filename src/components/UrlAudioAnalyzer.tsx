@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Link as LinkIcon, 
   Youtube, 
   Play, 
-  Pause, 
-  Volume2, 
   Radio, 
   Sparkles, 
   ExternalLink, 
@@ -15,10 +12,8 @@ import {
   Globe, 
   Music, 
   AlertCircle, 
-  Info,
-  Zap,
-  Loader2,
-  Video
+  Zap, 
+  Loader2
 } from 'lucide-react';
 import { AudioEngineState } from '../types';
 
