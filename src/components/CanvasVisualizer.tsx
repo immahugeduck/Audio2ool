@@ -2,6 +2,15 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { VisualizerSettings, AudioMetrics } from '../types';
 import { COLOR_PRESETS, getPresetById, createCanvasGradient, getPeakColor } from '../utils/colorGradients';
 import { 
+  frequencyToRatio, 
+  ratioToFrequency, 
+  frequencyToBin, 
+  binToFrequency,
+  getBinForRatio, 
+  getMagnitudeForRatio 
+} from '../utils/frequencyTools';
+import { frequencyToNote } from '../utils/audioPresets';
+import { 
   Maximize2, 
   Minimize2, 
   Camera, 
@@ -60,6 +69,7 @@ interface CanvasVisualizerProps {
   getTimeDomainData: () => Uint8Array;
   metrics: AudioMetrics;
   isPlaying: boolean;
+  sampleRate?: number;
 }
 
 export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
@@ -68,9 +78,11 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
   getTimeDomainData,
   metrics,
   isPlaying,
+  sampleRate = 44100,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const hoverStateRef = useRef<{ active: boolean; x: number; y: number } | null>(null);
 
   // Offscreen canvas for Spectrogram Waterfall scrolling
   const spectrogramCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -287,6 +299,11 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         ctx.fillRect(0, 0, width, height);
       }
 
+      // Unified coordinate space
+      const plotTopY = 28;
+      const plotBottomY = height - 35;
+      const plotHeight = Math.max(10, plotBottomY - plotTopY);
+
       // -------------------------------------------------------------
       // DRAW SAVED REFERENCE SPECTRUM LAYERS
       // -------------------------------------------------------------
@@ -298,20 +315,15 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           const points: { x: number; y: number }[] = [];
 
           for (let i = 0; i < pointsCount; i++) {
-            let dataIndex: number;
-            if (settings.logScale) {
-              const exp = Math.pow(i / pointsCount, 2.2);
-              dataIndex = Math.min(layer.data.length - 1, Math.floor(exp * layer.data.length));
-            } else {
-              dataIndex = Math.floor((i / pointsCount) * (layer.data.length * 0.7));
-            }
+            const ratio = i / (pointsCount - 1);
+            const ratioStart = Math.max(0, ratio - 0.5 / pointsCount);
+            const ratioEnd = Math.min(1, ratio + 0.5 / pointsCount);
+            const rawValue = getMagnitudeForRatio(layer.data, ratioStart, ratioEnd, settings.logScale, sampleRate, layer.data.length);
+            const normalized = Math.min(1.0, (rawValue / 255) * settings.sensitivity);
+            const h = normalized * plotHeight;
 
-            const rawValue = layer.data[dataIndex] || 0;
-            const normalized = (rawValue / 255) * settings.sensitivity;
-            const h = normalized * (height * 0.75);
-
-            const x = (i / (pointsCount - 1)) * width;
-            const y = height - h - 35;
+            const x = ratio * width;
+            const y = plotBottomY - h;
             points.push({ x, y });
           }
 
@@ -328,8 +340,8 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
             // Subtle comparative fill
             ctx.globalAlpha = 0.04;
             ctx.fillStyle = layer.color;
-            ctx.lineTo(width, height - 35);
-            ctx.lineTo(0, height - 35);
+            ctx.lineTo(width, plotBottomY);
+            ctx.lineTo(0, plotBottomY);
             ctx.closePath();
             ctx.fill();
 
@@ -366,21 +378,14 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         const gradient = createCanvasGradient(ctx, width, height, preset, settings.customGradient, settings.useCustomGradient);
 
         for (let i = 0; i < numBars; i++) {
-          // Logarithmic or Linear Bin Mapping
-          let dataIndex: number;
-          if (settings.logScale) {
-            const exp = Math.pow(i / numBars, 2); // Logarithmic mapping accentuating low frequencies
-            dataIndex = Math.min(binCount - 1, Math.floor(exp * binCount));
-          } else {
-            dataIndex = Math.floor((i / numBars) * (binCount * 0.75)); // Focus on audible range
-          }
-
-          const rawValue = freqData[dataIndex] || 0;
-          const normalized = (rawValue / 255) * settings.sensitivity;
-          const barHeight = Math.max(3, normalized * (height * 0.78));
+          const ratioStart = i / numBars;
+          const ratioEnd = (i + 1) / numBars;
+          const rawValue = getMagnitudeForRatio(freqData, ratioStart, ratioEnd, settings.logScale, sampleRate, binCount);
+          const normalized = Math.min(1.0, (rawValue / 255) * settings.sensitivity);
+          const barHeight = Math.max(2, normalized * plotHeight);
 
           const x = i * (barWidth + settings.barSpacing) + (width - numBars * (barWidth + settings.barSpacing)) / 2;
-          const y = height - barHeight - 35; // Leave space for bottom scale
+          const y = plotBottomY - barHeight;
 
           // Draw Bar
           ctx.fillStyle = gradient;
@@ -404,7 +409,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
               }
             }
 
-            const peakY = height - peakValuesRef.current[i] - 35;
+            const peakY = plotBottomY - peakValuesRef.current[i];
             if (peakValuesRef.current[i] > 2) {
               ctx.fillStyle = peakColor;
               ctx.shadowColor = preset.glowColor;
@@ -420,7 +425,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       // SMOOTH CURVE SPECTRUM MODE
       // -------------------------------------------------------------
       else if (settings.mode === 'curve' || settings.mode === 'hybrid') {
-        const pointsCount = Math.min(binCount, 128);
+        const pointsCount = Math.min(binCount, 160);
         const points: { x: number; y: number }[] = [];
 
         // Ensure peak values array length matches pointsCount
@@ -430,17 +435,12 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         }
 
         for (let i = 0; i < pointsCount; i++) {
-          let dataIndex: number;
-          if (settings.logScale) {
-            const exp = Math.pow(i / pointsCount, 2.2);
-            dataIndex = Math.min(binCount - 1, Math.floor(exp * binCount));
-          } else {
-            dataIndex = Math.floor((i / pointsCount) * (binCount * 0.7));
-          }
-
-          const rawValue = freqData[dataIndex] || 0;
-          const normalized = (rawValue / 255) * settings.sensitivity;
-          const h = normalized * (height * 0.75);
+          const ratio = i / (pointsCount - 1);
+          const ratioStart = Math.max(0, ratio - 0.5 / pointsCount);
+          const ratioEnd = Math.min(1, ratio + 0.5 / pointsCount);
+          const rawValue = getMagnitudeForRatio(freqData, ratioStart, ratioEnd, settings.logScale, sampleRate, binCount);
+          const normalized = Math.min(1.0, (rawValue / 255) * settings.sensitivity);
+          const h = normalized * plotHeight;
 
           // Update peak values
           if (h > curvePeakValuesRef.current[i]) {
@@ -453,8 +453,8 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
             }
           }
 
-          const x = (i / (pointsCount - 1)) * width;
-          const y = height - h - 35;
+          const x = ratio * width;
+          const y = plotBottomY - h;
           points.push({ x, y });
         }
 
@@ -462,7 +462,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           const gradient = createCanvasGradient(ctx, width, height, preset, settings.customGradient, settings.useCustomGradient);
 
           ctx.beginPath();
-          ctx.moveTo(points[0].x, height - 35);
+          ctx.moveTo(points[0].x, plotBottomY);
           ctx.lineTo(points[0].x, points[0].y);
 
           // Bezier curve interpolation
@@ -473,7 +473,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           }
 
           ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
-          ctx.lineTo(points[points.length - 1].x, height - 35);
+          ctx.lineTo(points[points.length - 1].x, plotBottomY);
           ctx.closePath();
 
           // Gradient fill
@@ -501,12 +501,12 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           // Draw Curve Peak Hold Line
           if (settings.showPeaks) {
             ctx.beginPath();
-            const peakY0 = height - curvePeakValuesRef.current[0] - 35;
+            const peakY0 = plotBottomY - curvePeakValuesRef.current[0];
             ctx.moveTo(points[0].x, peakY0);
             for (let i = 0; i < points.length - 1; i++) {
               const xc = (points[i].x + points[i + 1].x) / 2;
-              const peakYc = height - (curvePeakValuesRef.current[i] + curvePeakValuesRef.current[i + 1]) / 2 - 35;
-              ctx.quadraticCurveTo(points[i].x, height - curvePeakValuesRef.current[i] - 35, xc, peakYc);
+              const peakYc = plotBottomY - (curvePeakValuesRef.current[i] + curvePeakValuesRef.current[i + 1]) / 2;
+              ctx.quadraticCurveTo(points[i].x, plotBottomY - curvePeakValuesRef.current[i], xc, peakYc);
             }
             ctx.strokeStyle = peakColor + 'bb'; // semi-transparent
             ctx.lineWidth = 1.5;
@@ -586,15 +586,9 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           const frameRow: { x: number; y: number; val: number; color: string }[] = [];
 
           for (let i = 0; i < numBins; i++) {
-            let dataIndex: number;
-            if (settings.logScale) {
-              const exp = Math.pow(i / (numBins - 1 || 1), 2.2);
-              dataIndex = Math.min(frameData.length - 1, Math.floor(exp * frameData.length));
-            } else {
-              dataIndex = Math.floor((i / (numBins - 1 || 1)) * (frameData.length * 0.72));
-            }
-
-            const rawVal = frameData[dataIndex] || 0;
+            const ratioStart = i / numBins;
+            const ratioEnd = (i + 1) / numBins;
+            const rawVal = getMagnitudeForRatio(frameData, ratioStart, ratioEnd, settings.logScale, sampleRate, frameData.length);
             const normalized = (rawVal / 255) * settings.sensitivity;
             const barH = normalized * (120 * scale); // 3D mountain peak height displacement
 
@@ -714,9 +708,8 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
             sCtx.drawImage(sCanvas, 0, 0, width, height, 0, 2, width, height);
 
             // Render new line at top (y=0)
-            const numBins = Math.min(binCount, width);
             for (let x = 0; x < width; x++) {
-              const binIdx = Math.floor((x / width) * (binCount * 0.7));
+              const binIdx = getBinForRatio(x / width, settings.logScale, sampleRate, binCount);
               const intensity = freqData[binIdx] || 0;
 
               // Enhanced Thermal / Plasma Color Mapping for Spectrogram Noise Floor Tracking
@@ -1005,38 +998,34 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       // OVERLAYS: Hz FREQUENCY SCALE & dB GRID
       // -------------------------------------------------------------
       if (settings.showHzScale) {
-        ctx.fillStyle = 'rgba(148, 163, 184, 0.7)';
-        ctx.font = '11px monospace';
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.75)';
+        ctx.font = '10px monospace';
         ctx.textAlign = 'center';
 
-        const hzLabels = [
-          { hz: '20Hz', ratio: 0.02 },
-          { hz: '60Hz', ratio: 0.08 },
-          { hz: '250Hz', ratio: 0.22 },
-          { hz: '500Hz', ratio: 0.35 },
-          { hz: '1kHz', ratio: 0.5 },
-          { hz: '2.5kHz', ratio: 0.65 },
-          { hz: '5kHz', ratio: 0.78 },
-          { hz: '10kHz', ratio: 0.88 },
-          { hz: '20kHz', ratio: 0.98 },
-        ];
+        const hzMarkers = settings.logScale
+          ? [20, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 20000]
+          : [1000, 2500, 5000, 7500, 10000, 12500, 15000, 17500, 20000];
 
         // Bottom axis border line
         ctx.strokeStyle = 'rgba(51, 65, 85, 0.6)';
         ctx.beginPath();
-        ctx.moveTo(0, height - 32);
-        ctx.lineTo(width, height - 32);
+        ctx.moveTo(0, plotBottomY + 2);
+        ctx.lineTo(width, plotBottomY + 2);
         ctx.stroke();
 
-        hzLabels.forEach((label) => {
-          const labelX = label.ratio * width;
-          ctx.fillText(label.hz, labelX, height - 12);
+        hzMarkers.forEach((hz) => {
+          const ratio = frequencyToRatio(hz, settings.logScale);
+          const labelX = ratio * width;
+          if (labelX >= 10 && labelX <= width - 10) {
+            const labelText = hz >= 1000 ? `${hz / 1000}k` : `${hz}`;
+            ctx.fillText(labelText, labelX, height - 12);
 
-          // Tick line
-          ctx.beginPath();
-          ctx.moveTo(labelX, height - 32);
-          ctx.lineTo(labelX, height - 26);
-          ctx.stroke();
+            // Tick line
+            ctx.beginPath();
+            ctx.moveTo(labelX, plotBottomY + 2);
+            ctx.lineTo(labelX, plotBottomY + 8);
+            ctx.stroke();
+          }
         });
       }
 
@@ -1045,23 +1034,84 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         ctx.font = '10px monospace';
         ctx.textAlign = 'left';
 
-        const dbSteps = [-6, -12, -24, -36, -48, -60];
+        const dbSteps = [-3, -6, -12, -24, -36, -48, -60];
         dbSteps.forEach((db) => {
-          const norm = (db - settings.minDecibels) / (settings.maxDecibels - settings.minDecibels);
-          const lineY = height - 35 - norm * (height * 0.75);
+          if (db >= settings.minDecibels && db <= settings.maxDecibels) {
+            const norm = (db - settings.minDecibels) / (settings.maxDecibels - settings.minDecibels);
+            const lineY = plotBottomY - norm * plotHeight;
 
-          if (lineY > 20 && lineY < height - 40) {
-            ctx.strokeStyle = 'rgba(51, 65, 85, 0.25)';
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-            ctx.moveTo(0, lineY);
-            ctx.lineTo(width, lineY);
-            ctx.stroke();
-            ctx.setLineDash([]);
+            if (lineY > plotTopY && lineY < plotBottomY) {
+              ctx.strokeStyle = 'rgba(51, 65, 85, 0.25)';
+              ctx.setLineDash([4, 4]);
+              ctx.beginPath();
+              ctx.moveTo(0, lineY);
+              ctx.lineTo(width, lineY);
+              ctx.stroke();
+              ctx.setLineDash([]);
 
-            ctx.fillText(`${db} dB`, 8, lineY - 3);
+              ctx.fillText(`${db} dB`, 8, lineY - 3);
+            }
           }
         });
+      }
+
+      // -------------------------------------------------------------
+      // INTERACTIVE CURSOR INSPECTION CROSSHAIR & READOUT BADGE
+      // -------------------------------------------------------------
+      if (hoverStateRef.current && hoverStateRef.current.active) {
+        const hx = hoverStateRef.current.x;
+        const hy = hoverStateRef.current.y;
+
+        if (hx >= 0 && hx <= width && hy >= plotTopY && hy <= plotBottomY) {
+          const ratio = Math.max(0, Math.min(1, hx / width));
+          const hoverHz = Math.round(ratioToFrequency(ratio, settings.logScale));
+          const bin = frequencyToBin(hoverHz, sampleRate, binCount);
+          const mag = freqData[bin] || 0;
+          const hoverDb = Math.round(settings.minDecibels + (mag / 255) * (settings.maxDecibels - settings.minDecibels));
+          const noteInfo = frequencyToNote(hoverHz);
+
+          ctx.save();
+          // Crosshair lines
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.45)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+
+          // Vertical frequency tracking reticle
+          ctx.beginPath();
+          ctx.moveTo(hx, plotTopY);
+          ctx.lineTo(hx, plotBottomY);
+          ctx.stroke();
+
+          // Horizontal amplitude tracking reticle
+          ctx.beginPath();
+          ctx.moveTo(0, hy);
+          ctx.lineTo(width, hy);
+          ctx.stroke();
+
+          // Readout Badge Pill
+          const hzText = hoverHz >= 1000 ? `${(hoverHz / 1000).toFixed(2)} kHz` : `${hoverHz} Hz`;
+          const badgeText = `${hzText} (${noteInfo.formatted})  ${hoverDb} dBFS`;
+          ctx.font = 'bold 10px monospace';
+          const textWidth = ctx.measureText(badgeText).width;
+          const badgeWidth = textWidth + 16;
+          const badgeHeight = 22;
+          const badgeX = Math.min(width - badgeWidth - 10, Math.max(10, hx - badgeWidth / 2));
+          const badgeY = Math.max(plotTopY + 4, Math.min(plotBottomY - badgeHeight - 4, hy - 30));
+
+          ctx.fillStyle = 'rgba(2, 6, 23, 0.9)';
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.65)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 6);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = '#38bdf8';
+          ctx.textAlign = 'center';
+          ctx.fillText(badgeText, badgeX + badgeWidth / 2, badgeY + 15);
+          ctx.restore();
+        }
       }
 
       ctx.restore();
@@ -1074,7 +1124,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       cancelAnimationFrame(animationFrameId);
       resizeObserver.disconnect();
     };
-  }, [settings, getFrequencyData, getTimeDomainData, metrics, isPlaying, savedLayers, infinitePeakHold]);
+  }, [settings, getFrequencyData, getTimeDomainData, metrics, isPlaying, savedLayers, infinitePeakHold, sampleRate]);
 
   return (
     <div
@@ -1111,7 +1161,23 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
 
       {/* HTML5 Canvas */}
       <div className="flex-1 w-full min-h-0 relative">
-        <canvas ref={canvasRef} className="w-full h-full block cursor-crosshair" />
+        <canvas 
+          ref={canvasRef} 
+          className="w-full h-full block cursor-crosshair" 
+          onMouseMove={(e) => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const rect = canvas.getBoundingClientRect();
+            hoverStateRef.current = {
+              active: true,
+              x: e.clientX - rect.left,
+              y: e.clientY - rect.top,
+            };
+          }}
+          onMouseLeave={() => {
+            hoverStateRef.current = null;
+          }}
+        />
       </div>
 
       {/* Collapsible Layers Manager Drawer */}

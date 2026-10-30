@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { AudioEngineState, AudioMetrics, VisualizerSettings } from '../types';
+import { 
+  AudioEngineState, 
+  AudioMetrics, 
+  VisualizerSettings,
+  SignalGeneratorState,
+  FrequencyIsolatorState,
+  SignalGeneratorWaveform
+} from '../types';
 import { SAMPLE_TRACKS, generateSampleAudioBuffer, calculateAudioMetrics } from '../utils/audioPresets';
+import { generatePinkNoiseBuffer, generateWhiteNoiseBuffer } from '../utils/frequencyTools';
 
 export function useAudioEngine(settings: VisualizerSettings) {
   // Audio state
@@ -47,6 +55,29 @@ export function useAudioEngine(settings: VisualizerSettings) {
     fps: 60,
   });
 
+  // Signal Generator State
+  const [signalGenState, setSignalGenState] = useState<SignalGeneratorState>({
+    isActive: false,
+    waveform: 'sine',
+    frequency: 1000,
+    volume: 0.5,
+    isMuted: false,
+    isSweeping: false,
+    sweepStartHz: 20,
+    sweepEndHz: 20000,
+    sweepDurationSec: 5,
+    sweepProgress: 0,
+    sweepLoop: false,
+  });
+
+  // Frequency Isolator / Audition Filter State
+  const [isolatorState, setIsolatorState] = useState<FrequencyIsolatorState>({
+    enabled: false,
+    type: 'off',
+    frequency: 1000,
+    q: 2.0,
+  });
+
   // Web Audio Node Refs
   const engineStateRef = useRef(engineState);
   engineStateRef.current = engineState;
@@ -54,14 +85,28 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  const signalGenStateRef = useRef(signalGenState);
+  signalGenStateRef.current = signalGenState;
+
+  const isolatorStateRef = useRef(isolatorState);
+  isolatorStateRef.current = isolatorState;
+
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
   const bassFilterRef = useRef<BiquadFilterNode | null>(null);
   const midFilterRef = useRef<BiquadFilterNode | null>(null);
   const trebleFilterRef = useRef<BiquadFilterNode | null>(null);
+  const isolatorFilterRef = useRef<BiquadFilterNode | null>(null);
   const pannerRef = useRef<StereoPannerNode | null>(null);
   const mediaStreamDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+
+  // Signal Generator Node Refs
+  const signalGenGainRef = useRef<GainNode | null>(null);
+  const signalGenOscRef = useRef<OscillatorNode | null>(null);
+  const signalGenNoiseSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const sweepAnimationRef = useRef<number | null>(null);
+  const sweepStartTimeRef = useRef<number>(0);
 
   // Buffer and stream refs
   const audioBufferRef = useRef<AudioBuffer | null>(null);
@@ -77,6 +122,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
   // Data arrays
   const frequencyDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const timeDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const floatTimeDataRef = useRef<Float32Array<ArrayBuffer> | null>(null);
 
   // Initialize Audio Context and Audio Graph
   const initAudioGraph = useCallback(() => {
@@ -110,6 +156,22 @@ export function useAudioEngine(settings: VisualizerSettings) {
       trebleFilter.frequency.value = 4000;
       trebleFilter.gain.value = engineState.trebleGain;
 
+      // Frequency Isolator filter
+      const isolatorFilter = ctx.createBiquadFilter();
+      isolatorFilter.type = isolatorStateRef.current.enabled && isolatorStateRef.current.type !== 'off' 
+        ? isolatorStateRef.current.type 
+        : 'allpass';
+      isolatorFilter.frequency.value = isolatorStateRef.current.frequency;
+      isolatorFilter.Q.value = isolatorStateRef.current.q;
+
+      // Signal Generator Gain node (connects into bassFilter)
+      const signalGenGain = ctx.createGain();
+      signalGenGain.gain.value = signalGenStateRef.current.isActive && !signalGenStateRef.current.isMuted
+        ? signalGenStateRef.current.volume
+        : 0;
+      signalGenGain.connect(bassFilter);
+      signalGenGainRef.current = signalGenGain;
+
       // Panner Node
       const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
       if (panner) panner.pan.value = engineState.pan;
@@ -121,11 +183,12 @@ export function useAudioEngine(settings: VisualizerSettings) {
       const mediaStreamDestination = ctx.createMediaStreamDestination();
       masterGain.connect(mediaStreamDestination);
 
-      // Chain: Source -> Bass -> Mid -> Treble -> (Panner) -> Analyser -> Master Gain -> Destination
+      // Chain: Source -> Bass -> Mid -> Treble -> Isolator -> (Panner) -> Analyser -> Master Gain -> Destination
       bassFilter.connect(midFilter);
       midFilter.connect(trebleFilter);
+      trebleFilter.connect(isolatorFilter);
 
-      let lastNode: AudioNode = trebleFilter;
+      let lastNode: AudioNode = isolatorFilter;
       if (panner) {
         lastNode.connect(panner);
         lastNode = panner;
@@ -138,14 +201,16 @@ export function useAudioEngine(settings: VisualizerSettings) {
       bassFilterRef.current = bassFilter;
       midFilterRef.current = midFilter;
       trebleFilterRef.current = trebleFilter;
+      isolatorFilterRef.current = isolatorFilter;
       if (panner) pannerRef.current = panner;
       masterGainRef.current = masterGain;
       mediaStreamDestinationRef.current = mediaStreamDestination;
 
-      // Initialize byte arrays
+      // Initialize byte & float arrays
       const bufferLength = analyser.frequencyBinCount;
       frequencyDataRef.current = new Uint8Array(bufferLength);
       timeDataRef.current = new Uint8Array(bufferLength);
+      floatTimeDataRef.current = new Float32Array(analyser.fftSize);
     }
 
     if (audioCtxRef.current.state === 'suspended') {
@@ -164,6 +229,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
       const bufferLength = analyserRef.current.frequencyBinCount;
       frequencyDataRef.current = new Uint8Array(bufferLength);
       timeDataRef.current = new Uint8Array(bufferLength);
+      floatTimeDataRef.current = new Float32Array(analyserRef.current.fftSize);
     }
   }, [settings.fftSize, settings.smoothing, settings.minDecibels, settings.maxDecibels]);
 
@@ -668,6 +734,173 @@ export function useAudioEngine(settings: VisualizerSettings) {
     });
   }, []);
 
+  // Signal Generator Lifecycle and Sweep Engine
+  const stopSignalGenNode = useCallback(() => {
+    if (sweepAnimationRef.current) {
+      cancelAnimationFrame(sweepAnimationRef.current);
+      sweepAnimationRef.current = null;
+    }
+    if (signalGenOscRef.current) {
+      try {
+        signalGenOscRef.current.stop();
+        signalGenOscRef.current.disconnect();
+      } catch {}
+      signalGenOscRef.current = null;
+    }
+    if (signalGenNoiseSourceRef.current) {
+      try {
+        signalGenNoiseSourceRef.current.stop();
+        signalGenNoiseSourceRef.current.disconnect();
+      } catch {}
+      signalGenNoiseSourceRef.current = null;
+    }
+  }, []);
+
+  const stopSignalGen = useCallback(() => {
+    stopSignalGenNode();
+    setSignalGenState((prev) => ({
+      ...prev,
+      isActive: false,
+      isSweeping: false,
+      sweepProgress: 0,
+    }));
+  }, [stopSignalGenNode]);
+
+  const startSignalGen = useCallback(
+    (opts?: Partial<SignalGeneratorState>) => {
+      initAudioGraph();
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      stopSignalGenNode();
+
+      const config: SignalGeneratorState = {
+        ...signalGenStateRef.current,
+        ...opts,
+        isActive: true,
+      };
+      setSignalGenState(config);
+
+      if (!signalGenGainRef.current) return;
+      signalGenGainRef.current.gain.value = config.isMuted ? 0 : config.volume;
+
+      if (config.waveform === 'pink') {
+        const buffer = generatePinkNoiseBuffer(ctx, 10);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+        source.connect(signalGenGainRef.current);
+        source.start();
+        signalGenNoiseSourceRef.current = source;
+      } else if (config.waveform === 'white') {
+        const buffer = generateWhiteNoiseBuffer(ctx, 10);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+        source.connect(signalGenGainRef.current);
+        source.start();
+        signalGenNoiseSourceRef.current = source;
+      } else if (config.waveform === 'sweep') {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.connect(signalGenGainRef.current);
+
+        const startHz = Math.max(20, config.sweepStartHz);
+        const endHz = Math.min(20000, config.sweepEndHz);
+        const duration = Math.max(1, config.sweepDurationSec);
+
+        osc.frequency.setValueAtTime(startHz, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(endHz, ctx.currentTime + duration);
+        osc.start();
+        signalGenOscRef.current = osc;
+
+        sweepStartTimeRef.current = performance.now();
+
+        const runSweepAnimation = () => {
+          const elapsed = (performance.now() - sweepStartTimeRef.current) / 1000;
+          const progress = Math.min(1.0, elapsed / duration);
+          const currentFreq = startHz * Math.pow(endHz / startHz, progress);
+
+          setSignalGenState((prev) => ({
+            ...prev,
+            sweepProgress: progress,
+            frequency: Math.round(currentFreq),
+            isSweeping: true,
+          }));
+
+          if (progress >= 1.0) {
+            if (config.sweepLoop) {
+              stopSignalGenNode();
+              startSignalGen({ ...config, waveform: 'sweep' });
+            } else {
+              stopSignalGen();
+            }
+          } else {
+            sweepAnimationRef.current = requestAnimationFrame(runSweepAnimation);
+          }
+        };
+
+        sweepAnimationRef.current = requestAnimationFrame(runSweepAnimation);
+      } else {
+        const osc = ctx.createOscillator();
+        osc.type = config.waveform as OscillatorType;
+        osc.frequency.setValueAtTime(config.frequency, ctx.currentTime);
+        osc.connect(signalGenGainRef.current);
+        osc.start();
+        signalGenOscRef.current = osc;
+      }
+    },
+    [initAudioGraph, stopSignalGenNode, stopSignalGen]
+  );
+
+  const updateSignalGen = useCallback(
+    (partial: Partial<SignalGeneratorState>) => {
+      setSignalGenState((prev) => {
+        const next = { ...prev, ...partial };
+        const ctx = audioCtxRef.current;
+
+        if (signalGenGainRef.current) {
+          signalGenGainRef.current.gain.value = next.isMuted ? 0 : next.volume;
+        }
+
+        if (prev.isActive && ctx) {
+          if (partial.waveform && partial.waveform !== prev.waveform) {
+            setTimeout(() => startSignalGen(next), 0);
+            return next;
+          }
+
+          if (partial.frequency !== undefined && signalGenOscRef.current && prev.waveform !== 'sweep') {
+            signalGenOscRef.current.frequency.setTargetAtTime(next.frequency, ctx.currentTime, 0.02);
+          }
+        }
+        return next;
+      });
+    },
+    [startSignalGen]
+  );
+
+  const updateIsolator = useCallback((partial: Partial<FrequencyIsolatorState>) => {
+    setIsolatorState((prev) => {
+      const next = { ...prev, ...partial };
+      if (isolatorFilterRef.current && audioCtxRef.current) {
+        const filter = isolatorFilterRef.current;
+        const ctx = audioCtxRef.current;
+        filter.type = next.enabled && next.type !== 'off' ? next.type : 'allpass';
+        filter.frequency.setTargetAtTime(next.frequency, ctx.currentTime, 0.03);
+        filter.Q.setTargetAtTime(next.q, ctx.currentTime, 0.03);
+      }
+      return next;
+    });
+  }, []);
+
+  // Cleanup signal generator on unmount
+  useEffect(() => {
+    return () => {
+      stopSignalGenNode();
+    };
+  }, [stopSignalGenNode]);
+
   // Update real-time metrics and playback playhead position (throttled to ~100ms to prevent React scheduler re-entrancy)
   useEffect(() => {
     let lastTime = performance.now();
@@ -708,8 +941,18 @@ export function useAudioEngine(settings: VisualizerSettings) {
         // Extract Audio metrics for UI text & gauges
         if (analyserRef.current && frequencyDataRef.current) {
           analyserRef.current.getByteFrequencyData(frequencyDataRef.current);
+          if (floatTimeDataRef.current) {
+            analyserRef.current.getFloatTimeDomainData(floatTimeDataRef.current);
+          }
           const sampleRate = audioCtxRef.current ? audioCtxRef.current.sampleRate : 44100;
-          const calculated = calculateAudioMetrics(frequencyDataRef.current, sampleRate, currentSettings.fftSize);
+          const calculated = calculateAudioMetrics(
+            frequencyDataRef.current,
+            sampleRate,
+            currentSettings.fftSize,
+            floatTimeDataRef.current,
+            currentSettings.minDecibels,
+            currentSettings.maxDecibels
+          );
 
           setTimeout(() => {
             setMetrics((prev) => ({
@@ -785,5 +1028,16 @@ export function useAudioEngine(settings: VisualizerSettings) {
     getTimeDomainData,
     mediaStreamDestinationRef,
     loadedFile,
+    // Frequency Generator & Isolator tools
+    signalGenState,
+    startSignalGen,
+    stopSignalGen,
+    updateSignalGen,
+    isolatorState,
+    updateIsolator,
+    // Audio stream getters for Studio Recorder
+    getAudioContext: () => audioCtxRef.current,
+    getMasterStream: () => mediaStreamDestinationRef.current?.stream || null,
+    getMicStream: () => mediaStreamRef.current,
   };
 }

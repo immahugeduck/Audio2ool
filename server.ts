@@ -198,6 +198,11 @@ Return a JSON object with your classification and assessment.
     }
   });
 
+  // Health check endpoint
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+  });
+
   // Vite middleware for development vs static serve for production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -218,4 +223,15 @@ Return a JSON object with your classification and assessment.
   });
 }
 
-startServer();
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] Unhandled Rejection:', reason);
+});
+
+startServer().catch((err) => {
+  console.error('[Server] Fatal error starting server:', err);
+  process.exit(1);
+});

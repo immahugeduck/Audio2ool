@@ -116,6 +116,8 @@ export interface NoiseBaselineProfile {
   transientCount: number; // Count of true impulsive transient spikes detected
   transientsPerMin?: number; // Rate of transient impulses per minute
   lastTransientTime?: string;
+  lastTransientDeltaDb?: number;
+  transientSensitivity?: 'strict' | 'balanced' | 'sensitive';
   lastCalibratedTime?: string;
 }
 
@@ -143,4 +145,77 @@ export interface AiNoiseDetectionResult {
     hardwareFix: string; // e.g., 'Use a noise gate or ground loop isolator'
   };
 }
+
+// Frequency Tools Types
+export type SignalGeneratorWaveform = 'sine' | 'triangle' | 'square' | 'sawtooth' | 'pink' | 'white' | 'sweep';
+
+export interface SignalGeneratorState {
+  isActive: boolean;
+  waveform: SignalGeneratorWaveform;
+  frequency: number; // 20 - 20000 Hz
+  volume: number; // 0.0 - 1.0
+  isMuted: boolean;
+  // Sweep mode parameters
+  isSweeping: boolean;
+  sweepStartHz: number;
+  sweepEndHz: number;
+  sweepDurationSec: number;
+  sweepProgress: number; // 0 - 1.0
+  sweepLoop: boolean;
+}
+
+export type FrequencyIsolatorType = 'off' | 'bandpass' | 'notch' | 'highpass' | 'lowpass';
+
+export interface FrequencyIsolatorState {
+  enabled: boolean;
+  type: FrequencyIsolatorType;
+  frequency: number; // 20 - 20000 Hz
+  q: number; // 0.5 - 20.0
+}
+
+export interface OctaveBandData {
+  centerHz: number;
+  label: string;
+  rmsDb: number; // e.g. -45 dBFS
+  peakDb: number; // e.g. -38 dBFS
+  energyPercent: number; // 0 - 100%
+  isDominant: boolean;
+}
+
+// Premium Audio Recording Types
+export type RecordingSource = 'mic' | 'master';
+export type RecordingFormat = 'wav' | 'webm' | 'webm-320' | 'webm-128';
+export type RecordingQuality = '128k' | '256k' | '320k' | 'lossless';
+
+export interface AudioRecordingTake {
+  id: string;
+  title: string;
+  timestamp: string | number;
+  durationSeconds: number;
+  durationSec: number;
+  format: string;
+  quality?: RecordingQuality;
+  source: RecordingSource;
+  sampleRate: number;
+  channels?: number;
+  blob: Blob;
+  url: string;
+  audioUrl: string;
+  file: File;
+  sizeBytes: number;
+  peakDb: number;
+  isClipped?: boolean;
+  isNormalized?: boolean;
+}
+
+export interface StudioRecorderSettings {
+  source: RecordingSource;
+  format: RecordingFormat;
+  quality: RecordingQuality;
+  preAmpGainDb: number; // -12 to +18 dB
+  noiseGateEnabled: boolean;
+  noiseGateThresholdDb: number; // -60 to -24 dB
+  preRollCountdown: boolean; // 3-second countdown
+}
+
 

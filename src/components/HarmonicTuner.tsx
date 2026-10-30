@@ -9,11 +9,13 @@ import { AudioMetrics } from '../types';
 interface HarmonicTunerProps {
   metrics: AudioMetrics;
   getFrequencyData: () => Uint8Array | null;
+  sampleRate?: number;
 }
 
 export const HarmonicTuner: React.FC<HarmonicTunerProps> = ({
   metrics,
   getFrequencyData,
+  sampleRate = 44100,
 }) => {
   const [isActive, setIsActive] = useState<boolean>(true);
 
@@ -47,7 +49,7 @@ export const HarmonicTuner: React.FC<HarmonicTunerProps> = ({
 
     const harmonicsList: { order: number; expectedHz: number; actualHz: number; amplitude: number; isOdd: boolean }[] = [];
     const binCount = freqData.length;
-    const nyquist = 22050; // standard 44.1kHz sample rate half
+    const nyquist = sampleRate / 2;
     const hzPerBin = nyquist / binCount;
 
     for (let order = 1; order <= 8; order++) {
@@ -69,13 +71,26 @@ export const HarmonicTuner: React.FC<HarmonicTunerProps> = ({
         }
       }
 
+      // Parabolic sub-bin interpolation for accurate overtone measurement
+      let delta = 0;
+      if (actualBin > 0 && actualBin < binCount - 1 && maxVal > 15) {
+        const a = freqData[actualBin - 1];
+        const b = freqData[actualBin];
+        const c = freqData[actualBin + 1];
+        const denom = a - 2 * b + c;
+        if (denom < 0) {
+          delta = 0.5 * (a - c) / denom;
+          delta = Math.max(-0.5, Math.min(0.5, delta));
+        }
+      }
+
       const amplitude = Math.round((maxVal / 255) * 100);
-      const actualHz = actualBin * hzPerBin;
+      const actualHz = (actualBin + delta) * hzPerBin;
 
       harmonicsList.push({
         order,
         expectedHz: Math.round(expectedHz),
-        actualHz: Math.round(actualHz),
+        actualHz: Math.round(actualHz * 10) / 10,
         amplitude,
         isOdd: order % 2 !== 0,
       });

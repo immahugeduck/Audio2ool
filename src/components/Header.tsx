@@ -1,12 +1,12 @@
 import React from 'react';
-import { Activity, Radio, Sparkles, Mic, Music, FileText } from 'lucide-react';
+import { Activity, Radio, Sparkles, Mic, Music, FileText, Sliders, Disc } from 'lucide-react';
 import { AudioMetrics } from '../types';
 
 interface HeaderProps {
   sourceType: string;
   metrics?: AudioMetrics;
-  activeTab?: 'live' | 'media';
-  onSelectTab?: (tab: 'live' | 'media') => void;
+  activeTab?: 'live' | 'media' | 'tools' | 'recorder';
+  onSelectTab?: (tab: 'live' | 'media' | 'tools' | 'recorder') => void;
   onOpenGuide?: () => void;
   onOpenReport?: () => void;
 }
@@ -116,38 +116,66 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Page View Switcher Navigation Strip */}
       {activeTab && onSelectTab && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-950/80 p-1.5 rounded-2xl border border-cyan-500/20 shadow-inner">
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-col lg:flex-row items-center justify-between gap-3 bg-slate-950/80 p-1.5 rounded-2xl border border-cyan-500/20 shadow-inner">
+          <div className="flex items-center gap-1.5 w-full lg:w-auto overflow-x-auto">
             <button
               onClick={() => onSelectTab('live')}
               id="header-tab-btn-live-space"
-              className={`flex-1 sm:flex-initial py-2.5 px-5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              className={`flex-1 sm:flex-initial py-2 px-3.5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'live'
                   ? 'bg-gradient-to-r from-rose-500/25 via-pink-500/20 to-fuchsia-500/25 border border-rose-500/60 text-rose-200 shadow-[0_0_20px_rgba(244,63,94,0.3)] ring-1 ring-rose-400/40'
                   : 'text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-900'
               }`}
             >
               <Mic className={`w-4 h-4 ${activeTab === 'live' ? 'text-rose-400 animate-pulse' : 'text-slate-400'}`} />
-              <span>PAGE 1: Live Feed & Acoustic Studio</span>
+              <span>1. Live Mic & Room</span>
             </button>
 
             <button
               onClick={() => onSelectTab('media')}
               id="header-tab-btn-media-analyzer"
-              className={`flex-1 sm:flex-initial py-2.5 px-5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              className={`flex-1 sm:flex-initial py-2 px-3.5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'media'
                   ? 'bg-gradient-to-r from-cyan-500/25 via-blue-500/20 to-indigo-500/25 border border-cyan-400/60 text-cyan-200 shadow-[0_0_20px_rgba(6,182,212,0.3)] ring-1 ring-cyan-400/40'
                   : 'text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-900'
               }`}
             >
               <Music className={`w-4 h-4 ${activeTab === 'media' ? 'text-cyan-400 animate-pulse' : 'text-slate-400'}`} />
-              <span>PAGE 2: URL Stream & Uploaded File Studio</span>
+              <span>2. Media & URL Stream</span>
+            </button>
+
+            <button
+              onClick={() => onSelectTab('tools')}
+              id="header-tab-btn-frequency-tools"
+              className={`flex-1 sm:flex-initial py-2 px-3.5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                activeTab === 'tools'
+                  ? 'bg-gradient-to-r from-amber-500/25 via-orange-500/20 to-yellow-500/25 border border-amber-400/60 text-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.3)] ring-1 ring-amber-400/40'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-900'
+              }`}
+            >
+              <Sliders className={`w-4 h-4 ${activeTab === 'tools' ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
+              <span>3. Frequency Workbench & RTA</span>
+            </button>
+
+            <button
+              onClick={() => onSelectTab('recorder')}
+              id="header-tab-btn-studio-recorder"
+              className={`flex-1 sm:flex-initial py-2 px-3.5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                activeTab === 'recorder'
+                  ? 'bg-gradient-to-r from-red-500/25 via-rose-500/20 to-pink-500/25 border border-rose-400/60 text-rose-200 shadow-[0_0_20px_rgba(244,63,94,0.3)] ring-1 ring-rose-400/40'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent hover:bg-slate-900'
+              }`}
+            >
+              <Disc className={`w-4 h-4 ${activeTab === 'recorder' ? 'text-rose-400 animate-spin' : 'text-slate-400'}`} />
+              <span>4. Studio Audio Recorder</span>
             </button>
           </div>
 
-          <div className="text-[11px] font-mono text-slate-400 flex items-center gap-2 px-3 py-1 bg-slate-900/60 rounded-lg border border-slate-800">
+          <div className="text-[11px] font-mono text-slate-400 flex items-center gap-2 px-3 py-1 bg-slate-900/60 rounded-lg border border-slate-800 whitespace-nowrap">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-            <span>Workspace: <strong className="text-white uppercase">{activeTab === 'live' ? 'Live Microphone Equipment' : 'Media Playback Equipment'}</strong></span>
+            <span>Workspace: <strong className="text-white uppercase">
+              {activeTab === 'live' ? 'Live Mic Equipment' : activeTab === 'media' ? 'Media File Deck' : activeTab === 'tools' ? 'Frequency Tools & RTA' : 'Studio Recorder'}
+            </strong></span>
           </div>
         </div>
       )}

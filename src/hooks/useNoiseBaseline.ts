@@ -1,5 +1,33 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { AudioMetrics, NoiseBaselineProfile } from '../types';
+import { getMagnitudeForRatio } from '../utils/frequencyTools';
+
+const SENSITIVITY_CONFIG = {
+  strict: {
+    rmsRiseMin: 12,
+    peakRiseMin: 14,
+    minCrest: 13,
+    minPeakDb: -24,
+    snrMargin: 20,
+    cooldownMs: 750,
+  },
+  balanced: {
+    rmsRiseMin: 9,
+    peakRiseMin: 11,
+    minCrest: 11,
+    minPeakDb: -32,
+    snrMargin: 16,
+    cooldownMs: 550,
+  },
+  sensitive: {
+    rmsRiseMin: 6,
+    peakRiseMin: 8,
+    minCrest: 9,
+    minPeakDb: -40,
+    snrMargin: 12,
+    cooldownMs: 400,
+  },
+} as const;
 
 export function useNoiseBaseline(
   getFrequencyData: () => Uint8Array,
@@ -9,14 +37,15 @@ export function useNoiseBaseline(
   const [profile, setProfile] = useState<NoiseBaselineProfile>({
     isCalibrated: false,
     calibrationProgress: 0,
-    noiseFloorDb: -75,
+    noiseFloorDb: -72,
     averageRmsDb: -70,
     snrDb: 0,
     noiseCriteriaRating: 'NC-25 (Quiet Environment)',
-    dominantNoiseBand: 'Sub-Bass (Quiet)',
+    dominantNoiseBand: 'Ultra Quiet Baseline',
     bandFloors: new Array(32).fill(5),
     transientCount: 0,
     transientsPerMin: 0,
+    transientSensitivity: 'balanced',
   });
 
   const [isCalibrating, setIsCalibrating] = useState(false);
@@ -25,21 +54,40 @@ export function useNoiseBaseline(
   const metricsRef = useRef(metrics);
   metricsRef.current = metrics;
 
+  const sensitivityRef = useRef<'strict' | 'balanced' | 'sensitive'>('balanced');
   const bandHistoryRef = useRef<number[][]>([]);
+  const rmsHistoryRef = useRef<number[]>([]);
   const transientCounterRef = useRef<number>(0);
   const lastTransientTimeRef = useRef<number>(0);
+  const lastTransientTimeStrRef = useRef<string | undefined>(undefined);
+  const lastTransientDeltaRef = useRef<number | undefined>(undefined);
   const smoothedRmsRef = useRef<number>(-70);
+  const smoothedPeakRef = useRef<number>(-65);
+  const isArmedRef = useRef<boolean>(true);
+  const warmupUntilRef = useRef<number>(performance.now() + 1200);
   const listenStartTimeRef = useRef<number>(Date.now());
+
+  const setTransientSensitivity = useCallback((mode: 'strict' | 'balanced' | 'sensitive') => {
+    sensitivityRef.current = mode;
+    setProfile((prev) => ({
+      ...prev,
+      transientSensitivity: mode,
+    }));
+  }, []);
 
   // Reset transient counters
   const resetTransients = useCallback(() => {
     transientCounterRef.current = 0;
+    lastTransientTimeStrRef.current = undefined;
+    lastTransientDeltaRef.current = undefined;
+    isArmedRef.current = true;
     listenStartTimeRef.current = Date.now();
     setProfile((prev) => ({
       ...prev,
       transientCount: 0,
       transientsPerMin: 0,
       lastTransientTime: undefined,
+      lastTransientDeltaDb: undefined,
     }));
   }, []);
 
@@ -47,7 +95,12 @@ export function useNoiseBaseline(
   const startCalibration = useCallback(() => {
     setIsCalibrating(true);
     bandHistoryRef.current = [];
+    rmsHistoryRef.current = [];
     transientCounterRef.current = 0;
+    lastTransientTimeStrRef.current = undefined;
+    lastTransientDeltaRef.current = undefined;
+    isArmedRef.current = true;
+    warmupUntilRef.current = performance.now() + 1500;
     listenStartTimeRef.current = Date.now();
 
     let progress = 0;
@@ -70,26 +123,28 @@ export function useNoiseBaseline(
     }, 150);
   }, []);
 
-  // Continuous background noise profiling & accurate transient onset tracking
+  // Continuous background noise profiling & Schmitt-trigger transient onset tracking
   useEffect(() => {
     if (!isListening) return;
+
+    // Give 1.2s warmup when listening starts so initial mic stream click doesn't count as a transient
+    warmupUntilRef.current = performance.now() + 1200;
+    isArmedRef.current = true;
 
     const interval = setInterval(() => {
       const freqData = getFrequencyData();
       if (!freqData || freqData.length === 0) return;
 
-      // Downsample frequency bins into 32 bands
+      const binCount = freqData.length;
       const numBands = 32;
-      const step = Math.floor(freqData.length / numBands) || 1;
       const currentBands: number[] = [];
 
+      // Map 32 bands logarithmically across 20 Hz - 20 kHz to match the UI scale
       for (let i = 0; i < numBands; i++) {
-        let sum = 0;
-        for (let j = 0; j < step; j++) {
-          sum += freqData[i * step + j] || 0;
-        }
-        // Normalize 0-255 to 0-100
-        currentBands.push(Math.round((sum / step / 255) * 100));
+        const ratioStart = i / numBands;
+        const ratioEnd = (i + 1) / numBands;
+        const mag = getMagnitudeForRatio(freqData, ratioStart, ratioEnd, true, 44100, binCount);
+        currentBands.push(Math.round((mag / 255) * 100));
       }
 
       // Add to rolling history (keep last 80 samples ~ 8 seconds)
@@ -98,7 +153,7 @@ export function useNoiseBaseline(
         bandHistoryRef.current.shift();
       }
 
-      // Compute per-band min/baseline noise floor across the rolling window
+      // Compute per-band baseline noise floor across the rolling window
       const computedFloors: number[] = new Array(numBands).fill(100);
       bandHistoryRef.current.forEach((frame) => {
         frame.forEach((val, bandIdx) => {
@@ -108,72 +163,98 @@ export function useNoiseBaseline(
         });
       });
 
-      // Calculate global noise floor in dB
-      const avgFloorNormalized = computedFloors.reduce((a, b) => a + b, 0) / numBands;
-      // Map 0-100 to -90dB to -10dB
-      const estimatedFloorDb = Math.round(-90 + (avgFloorNormalized / 100) * 80);
-
-      // Signal to Noise Ratio (SNR = current RMS dB - Noise Floor dB)
-      const currentRms = metricsRef.current.rmsDb || -80;
-      const currentPeak = metricsRef.current.peakDb || -80;
+      const currentRms = metricsRef.current.rmsDb > -99 ? metricsRef.current.rmsDb : -80;
+      const currentPeak = metricsRef.current.peakDb > -99 ? metricsRef.current.peakDb : -80;
       const crestFactor = metricsRef.current.crestFactorDb || 0;
-      const calculatedSnr = Math.max(0, Math.round(currentRms - estimatedFloorDb));
 
-      // Accurate Acoustic Transient Detection (Energy Rate of Rise + Crest Factor):
-      // A true transient is an impulsive sudden onset (clap, snap, door click, percussion spike)
-      // rather than sustained sound level. We measure delta relative to preceding smoothed baseline.
-      const now = performance.now();
-      const previousSmoothed = smoothedRmsRef.current;
-      const deltaRmsRise = currentRms - previousSmoothed;
-
-      // Update smoothed RMS reference with fast attack / slow decay leaky integrator
-      if (currentRms > previousSmoothed) {
-        smoothedRmsRef.current = previousSmoothed + 0.25 * (currentRms - previousSmoothed);
-      } else {
-        smoothedRmsRef.current = previousSmoothed + 0.08 * (currentRms - previousSmoothed);
+      // Track rolling RMS history to derive the true 20th-percentile ambient room noise floor in dBFS
+      rmsHistoryRef.current.push(currentRms);
+      if (rmsHistoryRef.current.length > 80) {
+        rmsHistoryRef.current.shift();
       }
 
-      // Trigger condition:
-      // 1. Sudden energy spike (deltaRmsRise >= 12 dB in <100ms) OR extreme crest factor (>= 16 dB with peak >= -36 dBFS)
-      // 2. Must be above the estimated ambient floor by at least 10 dB to ignore silence jitter
-      // 3. Minimum refractory period of 300ms to avoid multi-counting a single echo/decay tail
-      const isTransientOnset =
-        (deltaRmsRise >= 12 && currentPeak > -50 && currentRms > estimatedFloorDb + 8) ||
-        (crestFactor >= 16 && currentPeak > -36 && currentRms > estimatedFloorDb + 10);
+      const sortedRms = [...rmsHistoryRef.current].sort((a, b) => a - b);
+      const p20Idx = Math.min(sortedRms.length - 1, Math.floor(sortedRms.length * 0.2));
+      const estimatedFloorDb = Math.max(-88, Math.min(-15, Math.round(sortedRms[p20Idx] ?? -72)));
 
-      if (isTransientOnset && now - lastTransientTimeRef.current > 300) {
+      // Signal to Noise Ratio (SNR = current RMS dB - Noise Floor dB)
+      const calculatedSnr = Math.max(0, Math.round(currentRms - estimatedFloorDb));
+
+      // Accurate Acoustic Transient Detection (Schmitt-Trigger Onset + Crest Factor + SNR Gate):
+      // A true transient is a sharp, sudden impulsive onset (handclap, finger snap, desk knock)
+      // that jumps rapidly above the preceding smoothed envelope and then decays.
+      const now = performance.now();
+      const previousSmoothedRms = smoothedRmsRef.current;
+      const previousSmoothedPeak = smoothedPeakRef.current;
+      const deltaRmsRise = currentRms - previousSmoothedRms;
+      const deltaPeakRise = currentPeak - previousSmoothedPeak;
+
+      const thresh = SENSITIVITY_CONFIG[sensitivityRef.current];
+
+      // Re-arm Schmitt trigger once signal drops back within 4 dB of baseline
+      if (!isArmedRef.current && currentRms <= previousSmoothedRms + 4) {
+        isArmedRef.current = true;
+      }
+
+      const isTransientOnset =
+        now > warmupUntilRef.current &&
+        isArmedRef.current &&
+        now - lastTransientTimeRef.current >= thresh.cooldownMs &&
+        deltaRmsRise >= thresh.rmsRiseMin &&
+        deltaPeakRise >= thresh.peakRiseMin &&
+        crestFactor >= thresh.minCrest &&
+        currentPeak >= Math.max(thresh.minPeakDb, estimatedFloorDb + thresh.snrMargin);
+
+      if (isTransientOnset) {
         transientCounterRef.current += 1;
         lastTransientTimeRef.current = now;
+        isArmedRef.current = false; // Disarm until impulse decays so echoes aren't double-counted
+        lastTransientDeltaRef.current = Math.round(deltaPeakRise);
+        lastTransientTimeStrRef.current = new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+      } else {
+        // Update smoothed envelope only on non-transient frames so spikes don't corrupt the baseline reference
+        const alphaRms = currentRms > previousSmoothedRms ? 0.15 : 0.25;
+        smoothedRmsRef.current = previousSmoothedRms + alphaRms * (currentRms - previousSmoothedRms);
+
+        const alphaPeak = currentPeak > previousSmoothedPeak ? 0.15 : 0.25;
+        smoothedPeakRef.current = previousSmoothedPeak + alphaPeak * (currentPeak - previousSmoothedPeak);
       }
 
       // Calculate transients per minute rate
-      const activeSeconds = Math.max(1, (Date.now() - listenStartTimeRef.current) / 1000);
-      const transientsPerMin = Number(((transientCounterRef.current / activeSeconds) * 60).toFixed(1));
+      const activeSeconds = Math.max(5, (Date.now() - listenStartTimeRef.current) / 1000);
+      const transientsPerMin =
+        transientCounterRef.current > 0
+          ? Number(((transientCounterRef.current / activeSeconds) * 60).toFixed(1))
+          : 0;
 
       // Determine Noise Criteria (NC) rating and dominant band
       let ncRating = 'NC-20 (Recording Studio)';
-      if (estimatedFloorDb > -45) {
+      if (estimatedFloorDb > -40) {
         ncRating = 'NC-55+ (Very Noisy / Industrial)';
-      } else if (estimatedFloorDb > -55) {
+      } else if (estimatedFloorDb > -50) {
         ncRating = 'NC-45 (Open Office / Fan Noise)';
-      } else if (estimatedFloorDb > -65) {
+      } else if (estimatedFloorDb > -60) {
         ncRating = 'NC-35 (Standard Room / Residence)';
-      } else if (estimatedFloorDb > -75) {
+      } else if (estimatedFloorDb > -70) {
         ncRating = 'NC-28 (Quiet Home / Library)';
       }
 
-      // Dominant noise band evaluation
+      // Dominant noise band evaluation across log-spaced bands
       let dominant = 'Sub-Bass Ground Hum';
-      const subBassFloor = computedFloors.slice(0, 4).reduce((a, b) => a + b, 0) / 4;
-      const midFloor = computedFloors.slice(8, 20).reduce((a, b) => a + b, 0) / 12;
-      const highFloor = computedFloors.slice(20, 32).reduce((a, b) => a + b, 0) / 12;
+      const subBassFloor = computedFloors.slice(0, 8).reduce((a, b) => a + b, 0) / 8;
+      const midFloor = computedFloors.slice(8, 22).reduce((a, b) => a + b, 0) / 14;
+      const highFloor = computedFloors.slice(22, 32).reduce((a, b) => a + b, 0) / 10;
 
-      if (midFloor > subBassFloor && midFloor > highFloor) {
-        dominant = 'Midrange Ambient (HVAC / Fan)';
-      } else if (highFloor > subBassFloor && highFloor > midFloor) {
-        dominant = 'High Frequency (Hiss / Static)';
-      } else if (subBassFloor < 10 && midFloor < 10 && highFloor < 10) {
+      if (subBassFloor < 8 && midFloor < 8 && highFloor < 8) {
         dominant = 'Ultra Quiet Baseline';
+      } else if (midFloor >= subBassFloor && midFloor >= highFloor) {
+        dominant = 'Midrange Ambient (HVAC / Room Tone)';
+      } else if (highFloor > subBassFloor && highFloor > midFloor) {
+        dominant = 'High Frequency (Air / Static Hiss)';
       }
 
       setTimeout(() => {
@@ -187,6 +268,9 @@ export function useNoiseBaseline(
           bandFloors: computedFloors,
           transientCount: transientCounterRef.current,
           transientsPerMin,
+          lastTransientTime: lastTransientTimeStrRef.current,
+          lastTransientDeltaDb: lastTransientDeltaRef.current,
+          transientSensitivity: sensitivityRef.current,
         }));
       }, 0);
     }, 100);
@@ -199,5 +283,6 @@ export function useNoiseBaseline(
     isCalibrating,
     startCalibration,
     resetTransients,
+    setTransientSensitivity,
   };
 }

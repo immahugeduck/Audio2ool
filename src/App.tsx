@@ -21,7 +21,9 @@ import { HarmonicTuner } from './components/HarmonicTuner';
 import { EventAnomalyLog } from './components/EventAnomalyLog';
 import { UrlAudioAnalyzer } from './components/UrlAudioAnalyzer';
 import { MicSettingsSelector } from './components/MicSettingsSelector';
-import { Mic, Music, Volume2 } from 'lucide-react';
+import { FrequencyToolsPanel } from './components/FrequencyToolsPanel';
+import { StudioRecorder } from './components/StudioRecorder';
+import { Mic, Music, Volume2, Sliders, Disc, Radio } from 'lucide-react';
 
 export default function App() {
   const [settings, setSettings] = useState<VisualizerSettings>({
@@ -54,8 +56,8 @@ export default function App() {
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [latestAiResult, setLatestAiResult] = useState<AiNoiseDetectionResult | null>(null);
 
-  // Tab State: 'live' (Mic/Acoustic space) or 'media' (Audio files/YouTube streams)
-  const [activeTab, setActiveTab] = useState<'live' | 'media'>('live');
+  // Tab State: 'live' | 'media' | 'tools' | 'recorder'
+  const [activeTab, setActiveTab] = useState<'live' | 'media' | 'tools' | 'recorder'>('live');
 
   const updateSettings = useCallback((partial: Partial<VisualizerSettings>) => {
     setSettings((prev) => ({ ...prev, ...partial }));
@@ -81,10 +83,21 @@ export default function App() {
     getTimeDomainData,
     mediaStreamDestinationRef,
     loadedFile,
+    // Frequency Generator & Isolator tools
+    signalGenState,
+    startSignalGen,
+    stopSignalGen,
+    updateSignalGen,
+    isolatorState,
+    updateIsolator,
+    // Audio stream getters for Studio Recorder
+    getAudioContext,
+    getMasterStream,
+    getMicStream,
   } = useAudioEngine(settings);
 
   // Feature #1: Long-term noise baseline profiling
-  const { profile, isCalibrating, startCalibration, resetTransients } = useNoiseBaseline(
+  const { profile, isCalibrating, startCalibration, resetTransients, setTransientSensitivity } = useNoiseBaseline(
     getFrequencyData,
     metrics,
     engineState.sourceType === 'mic' || engineState.isPlaying
@@ -92,15 +105,14 @@ export default function App() {
 
   // Tab Switcher Side Effects:
   // - When switching to 'live', auto-enable live microphone.
-  // - When switching to 'media', pause/stop mic and load default sample track.
+  // - When switching to 'media', load default sample track if nothing is loaded.
   useEffect(() => {
     if (activeTab === 'live') {
       enableMicrophone();
-    } else {
-      // Back to default playback sample
+    } else if (activeTab === 'media' && engineState.sourceType !== 'file' && engineState.sourceType !== 'url') {
       loadSampleTrack('synthwave');
     }
-  }, [activeTab, enableMicrophone, loadSampleTrack]);
+  }, [activeTab, enableMicrophone, loadSampleTrack, engineState.sourceType]);
 
   return (
     <DropZone onFileDrop={loadAudioFile}>
@@ -124,6 +136,7 @@ export default function App() {
             getTimeDomainData={getTimeDomainData}
             metrics={metrics}
             isPlaying={engineState.isPlaying}
+            sampleRate={getAudioContext()?.sampleRate || 44100}
           />
 
           {/* ============================================================== */}
@@ -174,6 +187,7 @@ export default function App() {
                       isCalibrating={isCalibrating}
                       startCalibration={startCalibration}
                       resetTransients={resetTransients}
+                      setTransientSensitivity={setTransientSensitivity}
                       isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
                     />
 
@@ -182,6 +196,7 @@ export default function App() {
                       metrics={metrics}
                       isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
                       getFrequencyData={getFrequencyData}
+                      sampleRate={getAudioContext()?.sampleRate || 44100}
                     />
 
                     {/* 4. Live Voice & Speech Transcription Panel */}
@@ -206,6 +221,7 @@ export default function App() {
                     <HarmonicTuner
                       metrics={metrics}
                       getFrequencyData={getFrequencyData}
+                      sampleRate={getAudioContext()?.sampleRate || 44100}
                     />
 
                     {/* 3. Sound Timeline Energy Profiler */}
@@ -300,6 +316,93 @@ export default function App() {
                       metrics={metrics}
                       currentTime={engineState.currentTime}
                       isPlaying={engineState.isPlaying}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* PAGE 3: PRECISION FREQUENCY WORKBENCH & RTA */}
+            {activeTab === 'tools' && (
+              <div className="flex flex-col gap-6 animate-fadeIn">
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-2 text-sm font-bold text-amber-300">
+                    <Sliders className="w-4 h-4 text-amber-400" />
+                    <span>PRECISION FREQUENCY WORKBENCH & ISO 1/3-OCTAVE RTA</span>
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono">Test Signal Generator, Sweep Engine & Surgical Filter Isolator</span>
+                </div>
+
+                {/* Main Frequency Tools Panel */}
+                <FrequencyToolsPanel
+                  signalGenState={signalGenState}
+                  startSignalGen={startSignalGen}
+                  stopSignalGen={stopSignalGen}
+                  updateSignalGen={updateSignalGen}
+                  isolatorState={isolatorState}
+                  updateIsolator={updateIsolator}
+                  getFrequencyData={getFrequencyData}
+                  metrics={metrics}
+                  sampleRate={getAudioContext()?.sampleRate || 44100}
+                />
+
+                {/* Auxiliary Companion Analysis Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  <div className="lg:col-span-6 flex flex-col gap-6">
+                    {/* Harmonic Musical Pitch & Tuning Analysis */}
+                    <HarmonicTuner
+                      metrics={metrics}
+                      getFrequencyData={getFrequencyData}
+                      sampleRate={getAudioContext()?.sampleRate || 44100}
+                    />
+                  </div>
+                  <div className="lg:col-span-6 flex flex-col gap-6">
+                    {/* Equalizer & Master Panner */}
+                    <EqualizerPanel
+                      engineState={engineState}
+                      setEq={setEq}
+                      setPlaybackRate={setPlaybackRate}
+                      setPan={setPan}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* PAGE 4: HIGH-FIDELITY STUDIO AUDIO RECORDER */}
+            {activeTab === 'recorder' && (
+              <div className="flex flex-col gap-6 animate-fadeIn">
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-2 text-sm font-bold text-rose-300">
+                    <Disc className="w-4 h-4 text-rose-400 animate-spin" />
+                    <span>STUDIO AUDIO RECORDER & TAKES VAULT</span>
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono">16-Bit Linear PCM WAV, Broadcast Opus & Instant Spectra Re-Analysis</span>
+                </div>
+
+                {/* Studio Recorder Console & Takes Vault */}
+                <StudioRecorder
+                  getMasterStream={getMasterStream}
+                  getMicStream={getMicStream}
+                  getAudioContext={getAudioContext}
+                  enableMicrophone={enableMicrophone}
+                  loadAudioFile={loadAudioFile}
+                />
+
+                {/* Auxiliary Recording Profiler & Anomaly Log */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  <div className="lg:col-span-6 flex flex-col gap-6">
+                    <SoundTimelineProfiler
+                      metrics={metrics}
+                      isListening={true}
+                      getFrequencyData={getFrequencyData}
+                    />
+                  </div>
+                  <div className="lg:col-span-6 flex flex-col gap-6">
+                    <TranscriptionPanel
+                      mediaStreamDestinationRef={mediaStreamDestinationRef}
+                      engineState={engineState}
+                      loadedFile={loadedFile}
                     />
                   </div>
                 </div>

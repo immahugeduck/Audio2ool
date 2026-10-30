@@ -102,12 +102,15 @@ export function noteToString(freqHz: number): string {
 
 /**
  * Calculates high-accuracy audio telemetry with quadratic/parabolic peak interpolation,
- * energy band integration, and spectral centroid.
+ * energy band integration, spectral centroid, and true AC-coupled time-domain RMS/Peak/Crest factor.
  */
 export function calculateAudioMetrics(
   frequencyData: Uint8Array,
   sampleRate: number = 44100,
-  fftSize: number = 2048
+  fftSize: number = 2048,
+  floatTimeData?: Float32Array | null,
+  minDecibels: number = -90,
+  maxDecibels: number = -10
 ): {
   peakFrequencyHz: number;
   peakFrequencyFormatted: string;
@@ -123,18 +126,22 @@ export function calculateAudioMetrics(
   treble: number;
 } {
   const binCount = frequencyData.length;
-  const hzPerBin = (sampleRate / 2) / binCount;
+  const hzPerBin = (sampleRate / 2) / (binCount || 1);
+  const dbSpan = Math.max(10, maxDecibels - minDecibels);
+
+  // Ignore DC bin (0 Hz) and sub-20Hz infrasonic offset when locating audible dominant pitch
+  const minAudibleBin = Math.max(1, Math.ceil(20 / hzPerBin));
 
   let maxVal = 0;
   let maxIndex = 0;
-  let sumSq = 0;
   let weightedFreqSum = 0;
   let totalMagnitudeSum = 0;
+  let spectralLinearPowerSum = 0;
 
   // Band index boundaries
-  const subBassMaxBin = Math.min(binCount, Math.floor(60 / hzPerBin));
-  const bassMaxBin = Math.min(binCount, Math.floor(250 / hzPerBin));
-  const midMaxBin = Math.min(binCount, Math.floor(4000 / hzPerBin));
+  const subBassMaxBin = Math.min(binCount - 1, Math.max(1, Math.floor(60 / hzPerBin)));
+  const bassMaxBin = Math.min(binCount - 1, Math.max(subBassMaxBin + 1, Math.floor(250 / hzPerBin)));
+  const midMaxBin = Math.min(binCount - 1, Math.max(bassMaxBin + 1, Math.floor(4000 / hzPerBin)));
 
   let subBassSum = 0, subBassCount = 0;
   let bassSum = 0, bassCount = 0;
@@ -143,44 +150,100 @@ export function calculateAudioMetrics(
 
   for (let i = 0; i < binCount; i++) {
     const val = frequencyData[i];
-    sumSq += val * val;
     const currentHz = i * hzPerBin;
-    weightedFreqSum += currentHz * val;
-    totalMagnitudeSum += val;
 
-    if (val > maxVal) {
-      maxVal = val;
-      maxIndex = i;
+    if (i >= minAudibleBin) {
+      weightedFreqSum += currentHz * val;
+      totalMagnitudeSum += val;
+
+      if (val > maxVal) {
+        maxVal = val;
+        maxIndex = i;
+      }
+
+      // Accumulate linear power from calibrated dB bin for fallback Parseval RMS
+      if (val > 0) {
+        const binDb = minDecibels + (val / 255) * dbSpan;
+        spectralLinearPowerSum += Math.pow(10, binDb / 10);
+      }
     }
 
-    if (i <= subBassMaxBin) {
+    if (i >= 1 && i <= subBassMaxBin) {
       subBassSum += val;
       subBassCount++;
-    } else if (i <= bassMaxBin) {
+    } else if (i > subBassMaxBin && i <= bassMaxBin) {
       bassSum += val;
       bassCount++;
-    } else if (i <= midMaxBin) {
+    } else if (i > bassMaxBin && i <= midMaxBin) {
       midSum += val;
       midCount++;
-    } else {
+    } else if (i > midMaxBin) {
       trebleSum += val;
       trebleCount++;
     }
   }
 
-  // Calculate RMS dBFS
-  const rms = Math.sqrt(sumSq / (binCount || 1)) / 255;
-  const rmsDb = rms > 0 ? 20 * Math.log10(rms) : -100;
+  // Calibrated spectral peak prominence in dBFS
+  const spectralProminenceDb = maxVal > 0
+    ? minDecibels + (maxVal / 255) * dbSpan
+    : -100;
 
-  // Calculate Peak dBFS
-  const peakNorm = maxVal / 255;
-  const peakDb = peakNorm > 0 ? 20 * Math.log10(peakNorm) : -100;
-  const crestFactorDb = Math.max(0, peakDb - rmsDb);
+  // Compute True Time-Domain RMS, Instantaneous Peak, and Crest Factor (with DC-offset removal)
+  let rmsDb = -100;
+  let peakDb = -100;
+  let crestFactorDb = 0;
+
+  if (floatTimeData && floatTimeData.length > 0) {
+    const n = floatTimeData.length;
+    // 1. Compute mean to strip any hardware microphone DC bias
+    let mean = 0;
+    for (let i = 0; i < n; i++) {
+      mean += floatTimeData[i];
+    }
+    mean /= n;
+
+    // 2. Measure AC-coupled RMS and Peak amplitude
+    let sumSqTime = 0;
+    let maxAbsSample = 0;
+    for (let i = 0; i < n; i++) {
+      const sample = floatTimeData[i] - mean;
+      const abs = Math.abs(sample);
+      sumSqTime += sample * sample;
+      if (abs > maxAbsSample) {
+        maxAbsSample = abs;
+      }
+    }
+
+    const rmsAmp = Math.sqrt(sumSqTime / n);
+    rmsDb = rmsAmp > 1e-5 ? 20 * Math.log10(rmsAmp) : -100;
+    peakDb = maxAbsSample > 1e-5 ? 20 * Math.log10(maxAbsSample) : -100;
+
+    // Only report meaningful crest factor above silence floor (-72 dBFS)
+    // so thermal/quantization noise in a quiet room never causes artificial crest spikes
+    if (rmsDb > -72 && peakDb > -65) {
+      const rawCrest = Math.max(0, peakDb - rmsDb);
+      // Smoothly gate crest factor near the -72 to -56 dBFS quiet ambient boundary
+      const gateWeight = Math.min(1, Math.max(0, (rmsDb - (-72)) / 16));
+      crestFactorDb = rawCrest * gateWeight;
+    } else {
+      crestFactorDb = 0;
+    }
+  } else {
+    // Fallback when only byte frequency data is passed:
+    // Use calibrated dB values instead of treating 0-255 dB bytes as linear amplitude
+    const avgPower = spectralLinearPowerSum / Math.max(1, binCount - minAudibleBin);
+    rmsDb = avgPower > 1e-10 ? 10 * Math.log10(avgPower) : -100;
+    peakDb = spectralProminenceDb;
+    if (rmsDb > -72 && peakDb > -65) {
+      crestFactorDb = Math.max(0, Math.min(20, (peakDb - rmsDb) * 0.5));
+    }
+  }
 
   // High Precision Parabolic (Quadratic) Peak Interpolation:
   // Evaluates continuous spectral peak between adjacent discrete FFT bins
+  // Require maxVal > 18 (~5 dB above minDecibels floor) to avoid random noise floor pitch hunting
   let refinedPeakHz = 0;
-  if (maxVal > 10 && maxIndex > 0 && maxIndex < binCount - 1) {
+  if (maxVal > 18 && maxIndex > minAudibleBin && maxIndex < binCount - 1) {
     const alpha = Math.max(1e-4, frequencyData[maxIndex - 1] / 255);
     const beta = Math.max(1e-4, frequencyData[maxIndex] / 255);
     const gamma = Math.max(1e-4, frequencyData[maxIndex + 1] / 255);
@@ -192,14 +255,15 @@ export function calculateAudioMetrics(
 
     const denom = logA - 2 * logB + logG;
     let delta = 0;
-    if (Math.abs(denom) > 1e-6) {
+    // Parabolic local maximum requires downward concavity (denom < 0)
+    if (denom < -1e-4) {
       delta = 0.5 * ((logA - logG) / denom);
       // Clamp fractional bin offset to [-0.5, 0.5]
       delta = Math.max(-0.5, Math.min(0.5, delta));
     }
 
     refinedPeakHz = Math.max(0, (maxIndex + delta) * hzPerBin);
-  } else if (maxVal > 10) {
+  } else if (maxVal > 18) {
     refinedPeakHz = maxIndex * hzPerBin;
   }
 
@@ -212,7 +276,7 @@ export function calculateAudioMetrics(
     peakFrequencyHz: refinedPeakHz,
     peakFrequencyFormatted: formatFrequency(refinedPeakHz),
     peakNoteName: noteInfo.formatted,
-    prominenceDb: Math.round(peakDb),
+    prominenceDb: Math.max(-100, Math.min(0, Math.round(spectralProminenceDb))),
     spectralCentroidHz: Math.round(spectralCentroidHz),
     rmsDb: Math.max(-100, Math.min(0, Math.round(rmsDb))),
     peakDb: Math.max(-100, Math.min(0, Math.round(peakDb))),

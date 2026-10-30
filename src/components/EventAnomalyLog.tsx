@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Bookmark, 
   AlertOctagon, 
@@ -8,7 +8,8 @@ import {
   Tag, 
   Clock, 
   Check, 
-  Copy
+  Copy,
+  Radio
 } from 'lucide-react';
 import { AudioMetrics } from '../types';
 
@@ -39,40 +40,83 @@ export const EventAnomalyLog: React.FC<EventAnomalyLogProps> = ({
   const [filterType, setFilterType] = useState<'all' | 'anomaly' | 'manual'>('all');
   const [manualNoteText, setManualNoteText] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [autoDetect, setAutoDetect] = useState<boolean>(true);
 
-  // Auto-detect acoustic anomalies (e.g., transient spike or peak above thresholds)
+  // Rolling baseline & Schmitt-trigger hysteresis refs to prevent false-positive transient spam
+  const smoothedRmsRef = useRef<number>(-70);
+  const smoothedPeakRef = useRef<number>(-65);
+  const isArmedRef = useRef<boolean>(true);
+  const lastAnomalyWallTimeRef = useRef<number>(0);
+  const lastClipWallTimeRef = useRef<number>(0);
+  const warmupUntilRef = useRef<number>(performance.now() + 1500);
+
+  const formatTimestamp = (totalSec: number): string => {
+    if (totalSec <= 0.01) {
+      return new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    const mins = Math.floor(totalSec / 60);
+    const secs = Math.floor(totalSec % 60);
+    const ms = Math.floor((totalSec % 1) * 10);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms}`;
+  };
+
+  // Auto-detect acoustic anomalies using true onset rate-of-rise + Schmitt-trigger hysteresis
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying || !autoDetect) return;
 
-    // Trigger high transient crest factor anomaly
-    if (metrics.crestFactorDb > 18 && metrics.peakDb > -12) {
+    const now = performance.now();
+    const curRms = metrics.rmsDb > -99 ? metrics.rmsDb : -80;
+    const curPeak = metrics.peakDb > -99 ? metrics.peakDb : -80;
+    const prevRms = smoothedRmsRef.current;
+    const prevPeak = smoothedPeakRef.current;
+
+    const deltaRms = curRms - prevRms;
+    const deltaPeak = curPeak - prevPeak;
+
+    // Re-arm Schmitt trigger once signal drops back within 4 dB of rolling baseline
+    if (!isArmedRef.current && curRms <= prevRms + 4) {
+      isArmedRef.current = true;
+    }
+
+    // Trigger high transient spike anomaly ONLY on a sudden sharp onset well above baseline
+    const isGenuineTransientSpike =
+      now > warmupUntilRef.current &&
+      isArmedRef.current &&
+      now - lastAnomalyWallTimeRef.current >= 2500 &&
+      deltaPeak >= 12 &&
+      deltaRms >= 9 &&
+      metrics.crestFactorDb >= 13 &&
+      curPeak > -22;
+
+    if (isGenuineTransientSpike) {
+      lastAnomalyWallTimeRef.current = now;
+      isArmedRef.current = false;
+
       const formattedTime = formatTimestamp(currentTime);
       const newEvent: AudioLogEvent = {
         id: `anomaly-${Date.now()}`,
         timestampSec: currentTime,
         formattedTime,
         type: 'anomaly',
-        severity: metrics.peakDb > -3 ? 'high' : 'medium',
-        title: `Transient Spike (+${metrics.crestFactorDb} dB Crest)`,
-        details: `Peak level reached ${metrics.peakDb} dBFS at ${metrics.peakFrequencyHz} Hz (${metrics.peakNoteName})`,
-        rmsDb: metrics.rmsDb,
-        peakHz: metrics.peakFrequencyHz,
+        severity: curPeak > -6 ? 'high' : 'medium',
+        title: `Transient Spike (+${Math.round(deltaPeak)} dB Onset / ${metrics.crestFactorDb} dB Crest)`,
+        details: `Peak jumped to ${curPeak} dBFS at ${Math.round(metrics.peakFrequencyHz)} Hz (${metrics.peakNoteName})`,
+        rmsDb: curRms,
+        peakHz: Math.round(metrics.peakFrequencyHz),
       };
 
       setTimeout(() => {
-        setEvents(prev => {
-          // Prevent duplicate spam within 1.5 seconds of last event
-          const last = prev[0];
-          if (last && Math.abs(last.timestampSec - currentTime) < 1.5) {
-            return prev;
-          }
-          return [newEvent, ...prev].slice(0, 50); // Keep last 50
-        });
+        setEvents((prev) => [newEvent, ...prev].slice(0, 50));
       }, 0);
+    } else {
+      // Update rolling baseline on non-spike frames
+      smoothedRmsRef.current = prevRms + 0.2 * (curRms - prevRms);
+      smoothedPeakRef.current = prevPeak + 0.2 * (curPeak - prevPeak);
     }
 
-    // Trigger clipping warning
-    if (metrics.peakDb > -1) {
+    // Trigger digital clipping warning (with 2-second wall-clock debounce)
+    if (now > warmupUntilRef.current && curPeak >= -0.8 && now - lastClipWallTimeRef.current >= 2000) {
+      lastClipWallTimeRef.current = now;
       const formattedTime = formatTimestamp(currentTime);
       const newEvent: AudioLogEvent = {
         id: `clip-${Date.now()}`,
@@ -81,29 +125,16 @@ export const EventAnomalyLog: React.FC<EventAnomalyLogProps> = ({
         type: 'clipping',
         severity: 'high',
         title: 'Digital Signal Clipping Detected',
-        details: `Signal hit ${metrics.peakDb} dBFS limit. Reduce input gain to avoid distortion.`,
-        rmsDb: metrics.rmsDb,
-        peakHz: metrics.peakFrequencyHz,
+        details: `Signal hit ${curPeak} dBFS ceiling. Reduce input gain to avoid distortion.`,
+        rmsDb: curRms,
+        peakHz: Math.round(metrics.peakFrequencyHz),
       };
 
       setTimeout(() => {
-        setEvents(prev => {
-          const last = prev[0];
-          if (last && Math.abs(last.timestampSec - currentTime) < 1.0) {
-            return prev;
-          }
-          return [newEvent, ...prev].slice(0, 50);
-        });
+        setEvents((prev) => [newEvent, ...prev].slice(0, 50));
       }, 0);
     }
-  }, [metrics.peakDb, metrics.crestFactorDb, isPlaying, currentTime]);
-
-  const formatTimestamp = (totalSec: number): string => {
-    const mins = Math.floor(totalSec / 60);
-    const secs = Math.floor(totalSec % 60);
-    const ms = Math.floor((totalSec % 1) * 10);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms}`;
-  };
+  }, [metrics.peakDb, metrics.rmsDb, metrics.crestFactorDb, metrics.peakFrequencyHz, metrics.peakNoteName, isPlaying, currentTime, autoDetect]);
 
   const addManualBookmark = () => {
     const text = manualNoteText.trim() || 'Manual Audio Bookmark';
@@ -114,9 +145,9 @@ export const EventAnomalyLog: React.FC<EventAnomalyLogProps> = ({
       type: 'manual',
       severity: 'low',
       title: text,
-      details: `Tagged at ${metrics.peakFrequencyHz} Hz, RMS ${metrics.rmsDb} dBFS`,
+      details: `Tagged at ${Math.round(metrics.peakFrequencyHz)} Hz, RMS ${metrics.rmsDb} dBFS`,
       rmsDb: metrics.rmsDb,
-      peakHz: metrics.peakFrequencyHz,
+      peakHz: Math.round(metrics.peakFrequencyHz),
     };
 
     setEvents(prev => [newEvent, ...prev]);
@@ -181,7 +212,19 @@ export const EventAnomalyLog: React.FC<EventAnomalyLogProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setAutoDetect(!autoDetect)}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              autoDetect
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Toggle automatic transient spike & clipping anomaly detection"
+          >
+            <Radio className={`w-3.5 h-3.5 ${autoDetect ? 'text-amber-400 animate-pulse' : 'text-slate-500'}`} />
+            {autoDetect ? 'Auto-Detect: ON' : 'Auto-Detect: OFF'}
+          </button>
           <button
             onClick={exportCsv}
             disabled={events.length === 0}

@@ -11,6 +11,7 @@ interface AcousticRoomRt60Props {
   metrics: AudioMetrics;
   isListening: boolean;
   getFrequencyData: () => Uint8Array | null;
+  sampleRate?: number;
 }
 
 interface Rt60MeasurementResult {
@@ -29,6 +30,7 @@ export const AcousticRoomRt60: React.FC<AcousticRoomRt60Props> = ({
   metrics,
   isListening,
   getFrequencyData,
+  sampleRate = 44100,
 }) => {
   const [isMeasuring, setIsMeasuring] = useState<boolean>(false);
   const [statusText, setStatusText] = useState<string>('Ready for room acoustic test');
@@ -98,8 +100,10 @@ export const AcousticRoomRt60: React.FC<AcousticRoomRt60Props> = ({
         let trebleSum = 0;
 
         const binCount = freqData.length;
-        const bassEnd = Math.floor(binCount * 0.08); // < 250 Hz
-        const midEnd = Math.floor(binCount * 0.45);  // 250Hz - 2kHz
+        const nyquist = sampleRate / 2;
+        const hzPerBin = nyquist / binCount;
+        const bassEnd = Math.max(1, Math.min(binCount - 2, Math.round(250 / hzPerBin))); // < 250 Hz (Low-end resonance)
+        const midEnd = Math.max(bassEnd + 1, Math.min(binCount - 1, Math.round(2000 / hzPerBin)));  // 250Hz - 2kHz (Speech & room warmth)
 
         for (let i = 0; i < binCount; i++) {
           const val = freqData[i];

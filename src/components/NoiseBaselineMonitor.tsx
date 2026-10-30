@@ -8,6 +8,7 @@ interface NoiseBaselineMonitorProps {
   isCalibrating: boolean;
   startCalibration: () => void;
   resetTransients?: () => void;
+  setTransientSensitivity?: (mode: 'strict' | 'balanced' | 'sensitive') => void;
   isListening: boolean;
 }
 
@@ -17,6 +18,7 @@ export const NoiseBaselineMonitor: React.FC<NoiseBaselineMonitorProps> = ({
   isCalibrating,
   startCalibration,
   resetTransients,
+  setTransientSensitivity,
   isListening,
 }) => {
   // SNR quality status
@@ -28,6 +30,7 @@ export const NoiseBaselineMonitor: React.FC<NoiseBaselineMonitorProps> = ({
   };
 
   const snrBadge = getSnrBadge(profile.snrDb);
+  const currentSensitivity = profile.transientSensitivity || 'balanced';
 
   return (
     <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md flex flex-col gap-4">
@@ -131,33 +134,53 @@ export const NoiseBaselineMonitor: React.FC<NoiseBaselineMonitorProps> = ({
 
         {/* Transient Spike Counter */}
         <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-3 flex flex-col justify-between relative group">
-          <div className="text-[11px] font-medium text-slate-400 flex items-center justify-between">
-            <span title="Counts sudden sharp impulsive onsets (>12dB rise or >16dB crest factor)">Impulsive Transients</span>
+          <div className="text-[11px] font-medium text-slate-400 flex items-center justify-between gap-1">
+            <span title="Schmitt-trigger onset detector: counts sharp impulsive spikes above ambient floor">
+              Impulsive Transients
+            </span>
             <div className="flex items-center gap-1">
               {resetTransients && profile.transientCount > 0 && (
                 <button
                   onClick={resetTransients}
-                  className="text-[10px] text-slate-500 hover:text-amber-300 transition-all cursor-pointer px-1 py-0.5 rounded bg-slate-900 border border-slate-800"
+                  className="text-[10px] text-slate-400 hover:text-amber-300 transition-all cursor-pointer px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800"
                   title="Reset transient counter"
                 >
                   Reset
                 </button>
               )}
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             </div>
           </div>
           <div className="mt-2">
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-xl font-bold font-mono text-amber-300">
-                {profile.transientCount}
-              </span>
-              {profile.transientsPerMin !== undefined && profile.transientsPerMin > 0 && (
-                <span className="text-[10px] font-mono text-slate-500">
-                  ({profile.transientsPerMin}/min)
+            <div className="flex items-baseline justify-between gap-1.5">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-xl font-bold font-mono text-amber-300">
+                  {profile.transientCount}
                 </span>
+                {profile.transientsPerMin !== undefined && profile.transientsPerMin > 0 && (
+                  <span className="text-[10px] font-mono text-slate-500">
+                    ({profile.transientsPerMin}/min)
+                  </span>
+                )}
+              </div>
+              {setTransientSensitivity && (
+                <select
+                  value={currentSensitivity}
+                  onChange={(e) => setTransientSensitivity(e.target.value as 'strict' | 'balanced' | 'sensitive')}
+                  className="bg-slate-900 border border-slate-800 text-[9px] text-slate-300 rounded px-1 py-0.5 focus:outline-none focus:border-amber-500/50 cursor-pointer"
+                  title="Transient detection sensitivity threshold"
+                >
+                  <option value="strict">Strict</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="sensitive">Sensitive</option>
+                </select>
               )}
             </div>
-            <p className="text-[10px] text-slate-500 mt-0.5">Sudden acoustic bursts / claps</p>
+            <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+              {profile.lastTransientTime
+                ? `Last: ${profile.lastTransientTime}${profile.lastTransientDeltaDb ? ` (+${profile.lastTransientDeltaDb}dB)` : ''}`
+                : 'Sudden acoustic bursts / claps'}
+            </p>
           </div>
         </div>
       </div>
