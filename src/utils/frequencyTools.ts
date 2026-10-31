@@ -1,7 +1,8 @@
 /**
  * Precision Frequency Analysis, ISO 1/3-Octave RTA, and Signal Synthesis Utilities
  */
-import { OctaveBandData } from '../types';
+import { OctaveBandData, DistortionAnalysis, HarmonicOvertone, FrequencyWeighting } from '../types';
+import { formatFrequency, frequencyToNote } from './audioPresets';
 
 // ISO 266 standard 31 1/3-octave center frequencies (Hz) from 20 Hz to 20 kHz
 export const ISO_1_3_OCTAVE_FREQUENCIES: number[] = [
@@ -318,10 +319,12 @@ export function getMagnitudeForRatio(
   ratioEnd: number,
   isLog: boolean,
   sampleRate: number,
-  binCount: number
+  binCount: number,
+  minHz: number = 20,
+  maxHz: number = 20000
 ): number {
-  const fStart = ratioToFrequency(ratioStart, isLog);
-  const fEnd = ratioToFrequency(ratioEnd, isLog);
+  const fStart = ratioToFrequency(ratioStart, isLog, minHz, maxHz);
+  const fEnd = ratioToFrequency(ratioEnd, isLog, minHz, maxHz);
   const bStart = frequencyToBin(Math.min(fStart, fEnd), sampleRate, binCount);
   const bEnd = frequencyToBin(Math.max(fStart, fEnd), sampleRate, binCount);
 
@@ -336,3 +339,259 @@ export function getMagnitudeForRatio(
   }
   return maxVal;
 }
+
+/**
+ * IEC 61672-1 Standard A-Weighting Filter Offset (dB).
+ * Reflects human ear sensitivity attenuation (cuts bass and high frequencies, peaks around 2.5kHz).
+ */
+export function getAWeightingOffsetDb(freqHz: number): number {
+  if (freqHz <= 0 || !isFinite(freqHz)) return -100;
+  const f2 = freqHz * freqHz;
+  const c1 = 12194.217 * 12194.217;
+  const c2 = 20.598997 * 20.598997;
+  const c3 = 107.65265 * 107.65265;
+  const c4 = 737.86223 * 737.86223;
+  
+  const num = c1 * f2 * f2;
+  const den = (f2 + c2) * Math.sqrt((f2 + c3) * (f2 + c4)) * (f2 + c1);
+  if (den <= 0) return -100;
+  const ra = num / den;
+  return 20 * Math.log10(ra) + 2.0; // 0.0 dB at 1,000 Hz
+}
+
+/**
+ * IEC 61672-1 Standard C-Weighting Filter Offset (dB).
+ * Flat across speech frequencies with moderate roll-off at infrasonic (<31.5Hz) and ultrasonic (>8kHz).
+ */
+export function getCWeightingOffsetDb(freqHz: number): number {
+  if (freqHz <= 0 || !isFinite(freqHz)) return -100;
+  const f2 = freqHz * freqHz;
+  const c1 = 12194.217 * 12194.217;
+  const c2 = 20.598997 * 20.598997;
+  const num = c1 * f2;
+  const den = (f2 + c2) * (f2 + c1);
+  if (den <= 0) return -100;
+  const rc = num / den;
+  return 20 * Math.log10(rc) + 0.06; // 0.0 dB at 1,000 Hz
+}
+
+/**
+ * Returns the dB offset for a specified frequency under the selected weighting standard.
+ */
+export function getWeightingOffsetDb(freqHz: number, weighting: FrequencyWeighting): number {
+  if (weighting === 'A') return getAWeightingOffsetDb(freqHz);
+  if (weighting === 'C') return getCWeightingOffsetDb(freqHz);
+  return 0.0; // Z / Flat unweighted
+}
+
+/**
+ * High-precision Float32 magnitude lookup for sub-0.01 dBFS accuracy.
+ */
+export function getFloatMagnitudeForRatio(
+  floatFreqData: Float32Array,
+  ratioStart: number,
+  ratioEnd: number,
+  isLog: boolean,
+  sampleRate: number,
+  binCount: number,
+  minHz: number = 20,
+  maxHz: number = 20000
+): number {
+  const fStart = ratioToFrequency(ratioStart, isLog, minHz, maxHz);
+  const fEnd = ratioToFrequency(ratioEnd, isLog, minHz, maxHz);
+  const bStart = frequencyToBin(Math.min(fStart, fEnd), sampleRate, binCount);
+  const bEnd = frequencyToBin(Math.max(fStart, fEnd), sampleRate, binCount);
+
+  if (bStart === bEnd) {
+    return floatFreqData[bStart] ?? -100;
+  }
+
+  let maxVal = -150;
+  for (let b = bStart; b <= bEnd; b++) {
+    const val = floatFreqData[b] ?? -150;
+    if (val > maxVal) maxVal = val;
+  }
+  return maxVal;
+}
+
+/**
+ * Real-Time Total Harmonic Distortion (THD% & THD+N dB) Analyzer.
+ * Extracts the prominent fundamental and measures overtone energy at 2x, 3x, 4x, 5x, 6x, 7x, 8x.
+ */
+export function analyzeTotalHarmonicDistortion(
+  floatFreqData: Float32Array,
+  sampleRate: number,
+  targetFundHz?: number
+): DistortionAnalysis {
+  const binCount = floatFreqData.length;
+  const hzPerBin = (sampleRate / 2) / binCount;
+  const minAudibleBin = Math.max(1, Math.ceil(20 / hzPerBin));
+  const maxAudibleBin = Math.min(binCount - 1, Math.floor(20000 / hzPerBin));
+
+  // 1. Locate fundamental peak
+  let fundBin = 0;
+  let maxDb = -150;
+
+  if (targetFundHz && targetFundHz >= 20 && targetFundHz <= 10000) {
+    // Search window within ±15% of specified target frequency
+    const centerBin = frequencyToBin(targetFundHz, sampleRate, binCount);
+    const win = Math.max(2, Math.round((targetFundHz * 0.15) / hzPerBin));
+    const start = Math.max(minAudibleBin, centerBin - win);
+    const end = Math.min(maxAudibleBin, centerBin + win);
+
+    for (let i = start; i <= end; i++) {
+      const val = floatFreqData[i];
+      if (val > maxDb) {
+        maxDb = val;
+        fundBin = i;
+      }
+    }
+  }
+
+  // Fallback: search global maximum above 20 Hz
+  if (maxDb <= -75 || fundBin === 0) {
+    for (let i = minAudibleBin; i <= maxAudibleBin; i++) {
+      const val = floatFreqData[i];
+      if (val > maxDb) {
+        maxDb = val;
+        fundBin = i;
+      }
+    }
+  }
+
+  // Check if a valid tone is present (fundamental must be at least -70 dBFS)
+  const isTone = maxDb > -70 && fundBin > minAudibleBin;
+  if (!isTone) {
+    return {
+      isToneDetected: false,
+      detected: false,
+      fundamentalHz: 0,
+      fundamentalFormatted: '---',
+      fundamentalDb: -100,
+      fundamentalNote: '---',
+      thdPercent: 0,
+      thdDb: -120,
+      thdPlusNDb: -120,
+      snrDb: 0,
+      harmonics: [],
+    };
+  }
+
+  // Parabolic interpolation around fundamental peak
+  let refinedFundHz = fundBin * hzPerBin;
+  if (fundBin > 0 && fundBin < binCount - 1) {
+    const a = floatFreqData[fundBin - 1];
+    const b = floatFreqData[fundBin];
+    const c = floatFreqData[fundBin + 1];
+    const denom = a - 2 * b + c;
+    if (denom < -1e-4) {
+      const delta = 0.5 * ((a - c) / denom);
+      refinedFundHz = Math.max(20, (fundBin + Math.max(-0.5, Math.min(0.5, delta))) * hzPerBin);
+    }
+  }
+
+  const fundPower = Math.pow(10, maxDb / 10);
+  const harmonics: HarmonicOvertone[] = [];
+
+  // Excluded bins set to isolate noise floor from harmonic peaks
+  const toneBins = new Set<number>();
+  for (let b = Math.max(0, fundBin - 2); b <= Math.min(binCount - 1, fundBin + 2); b++) {
+    toneBins.add(b);
+  }
+
+  let harmonicPowerSum = 0;
+  const maxHarmonics = 8;
+
+  for (let h = 2; h <= maxHarmonics; h++) {
+    const harmTargetHz = refinedFundHz * h;
+    if (harmTargetHz >= (sampleRate / 2) - 100) break;
+
+    const harmCenterBin = frequencyToBin(harmTargetHz, sampleRate, binCount);
+    const searchWin = Math.max(1, Math.round((harmTargetHz * 0.04) / hzPerBin));
+    const sStart = Math.max(minAudibleBin, harmCenterBin - searchWin);
+    const sEnd = Math.min(binCount - 1, harmCenterBin + searchWin);
+
+    let hMaxDb = -150;
+    let hMaxBin = harmCenterBin;
+    for (let b = sStart; b <= sEnd; b++) {
+      toneBins.add(b);
+      const val = floatFreqData[b];
+      if (val > hMaxDb) {
+        hMaxDb = val;
+        hMaxBin = b;
+      }
+    }
+
+    // Parabolic interpolation for harmonic peak frequency
+    let hRefinedHz = hMaxBin * hzPerBin;
+    if (hMaxBin > 0 && hMaxBin < binCount - 1) {
+      const a = floatFreqData[hMaxBin - 1];
+      const b = floatFreqData[hMaxBin];
+      const c = floatFreqData[hMaxBin + 1];
+      const denom = a - 2 * b + c;
+      if (denom < -1e-4) {
+        const delta = 0.5 * ((a - c) / denom);
+        hRefinedHz = (hMaxBin + Math.max(-0.5, Math.min(0.5, delta))) * hzPerBin;
+      }
+    }
+
+    const hPower = Math.pow(10, hMaxDb / 10);
+    harmonicPowerSum += hPower;
+
+    const deltaDb = hMaxDb - maxDb;
+    const powerPercent = fundPower > 0 ? (hPower / fundPower) * 100 : 0;
+    const actualHzRounded = Math.round(hRefinedHz * 10) / 10;
+    const expectedHzRounded = Math.round(harmTargetHz * 10) / 10;
+    const levelRounded = Number(hMaxDb.toFixed(1));
+    const deltaRounded = Number(deltaDb.toFixed(1));
+
+    harmonics.push({
+      order: h,
+      freqHz: actualHzRounded,
+      expectedHz: expectedHzRounded,
+      actualHz: actualHzRounded,
+      levelDb: levelRounded,
+      magnitudeDb: levelRounded,
+      deltaDb: deltaRounded,
+      relativeDb: deltaRounded,
+      powerPercent: Number(powerPercent.toFixed(3)),
+    });
+  }
+
+  // Calculate residual noise power
+  let noisePowerSum = 0;
+  for (let i = minAudibleBin; i <= maxAudibleBin; i++) {
+    if (!toneBins.has(i)) {
+      noisePowerSum += Math.pow(10, floatFreqData[i] / 10);
+    }
+  }
+
+  // THD calculation
+  const thdRatio = fundPower > 0 ? Math.sqrt(harmonicPowerSum / fundPower) : 0;
+  const thdPercent = Math.min(100, thdRatio * 100);
+  const thdDb = thdPercent > 0 ? 20 * Math.log10(thdPercent / 100) : -120;
+
+  // THD + Noise calculation
+  const thdPlusNRatio = fundPower > 0 ? Math.sqrt((harmonicPowerSum + noisePowerSum) / fundPower) : 0;
+  const thdPlusNDb = thdPlusNRatio > 0 ? 20 * Math.log10(thdPlusNRatio) : -120;
+
+  // Signal-to-Noise Ratio (SNR)
+  const snrDb = noisePowerSum > 0 && fundPower > 0 ? 10 * Math.log10(fundPower / noisePowerSum) : 0;
+
+  const noteInfo = frequencyToNote(refinedFundHz);
+
+  return {
+    isToneDetected: true,
+    detected: true,
+    fundamentalHz: Math.round(refinedFundHz * 10) / 10,
+    fundamentalFormatted: formatFrequency(refinedFundHz),
+    fundamentalDb: Number(maxDb.toFixed(1)),
+    fundamentalNote: noteInfo.formatted,
+    thdPercent: Number(thdPercent.toFixed(3)),
+    thdDb: Number(thdDb.toFixed(1)),
+    thdPlusNDb: Number(thdPlusNDb.toFixed(1)),
+    snrDb: Number(snrDb.toFixed(1)),
+    harmonics,
+  };
+}
+

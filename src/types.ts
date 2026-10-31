@@ -23,6 +23,10 @@ export interface CustomGradient {
   peak: string;
 }
 
+export type FrequencyZoomPreset = 'full' | 'sub-bass' | 'mid-vocal' | 'treble-air' | 'custom';
+
+export type SpectrogramColorMap = 'thermal' | 'viridis' | 'inferno' | 'magma' | 'matrix';
+
 export interface VisualizerSettings {
   mode: VisualizationMode;
   fftSize: number; // 128, 256, 512, 1024, 2048, 4096, 8192
@@ -42,6 +46,11 @@ export interface VisualizerSettings {
   fillOpacity: number; // 0.1 - 1.0
   barSpacing: number; // 1 - 8
   barWidthMultiplier: number; // 0.5 - 2.0
+  // Phase 2: Sub-Band Frequency Zoom & Scientific Spectrogram Colormaps
+  zoomPreset: FrequencyZoomPreset;
+  minFreqHz: number; // 20 - 19000 Hz
+  maxFreqHz: number; // 100 - 20000 Hz
+  spectrogramColorMap: SpectrogramColorMap;
 }
 
 export interface AudioInputDevice {
@@ -79,6 +88,34 @@ export interface AudioEngineState {
   phoneMicDeviceName: string | null;
 }
 
+export type FrequencyWeighting = 'Z' | 'A' | 'C';
+
+export interface HarmonicOvertone {
+  order: number; // 1 = Fundamental, 2 = 2nd harmonic, etc.
+  freqHz: number;
+  expectedHz: number;
+  actualHz: number;
+  levelDb: number; // dBFS
+  magnitudeDb: number; // dBFS
+  deltaDb: number; // dB below fundamental
+  relativeDb: number; // dBc below fundamental
+  powerPercent: number; // relative power %
+}
+
+export interface DistortionAnalysis {
+  isToneDetected: boolean;
+  detected: boolean;
+  fundamentalHz: number;
+  fundamentalFormatted: string;
+  fundamentalDb: number;
+  fundamentalNote: string;
+  thdPercent: number; // e.g. 0.04%
+  thdDb: number; // e.g. -68.0 dB
+  thdPlusNDb: number; // e.g. -61.2 dB
+  snrDb: number; // Signal-to-Noise Ratio (dB)
+  harmonics: HarmonicOvertone[];
+}
+
 export interface AudioMetrics {
   peakFrequencyHz: number;
   peakFrequencyFormatted: string;
@@ -86,6 +123,9 @@ export interface AudioMetrics {
   prominenceDb: number;
   spectralCentroidHz: number;
   rmsDb: number;
+  rmsDba: number;
+  rmsDbc: number;
+  weighting: FrequencyWeighting;
   peakDb: number;
   crestFactorDb: number;
   subBass: number; // 0 - 100
@@ -93,6 +133,7 @@ export interface AudioMetrics {
   mid: number; // 0 - 100
   treble: number; // 0 - 100
   fps: number;
+  distortion?: DistortionAnalysis;
 }
 
 export interface SampleTrack {
@@ -184,8 +225,16 @@ export interface OctaveBandData {
 
 // Premium Audio Recording Types
 export type RecordingSource = 'mic' | 'master';
-export type RecordingFormat = 'wav' | 'webm' | 'webm-320' | 'webm-128';
+export type RecordingFormat = 'wav-32f' | 'wav' | 'webm' | 'webm-320' | 'webm-128';
 export type RecordingQuality = '128k' | '256k' | '320k' | 'lossless';
+
+export interface WavCueMarker {
+  id: number;
+  sampleOffset: number;
+  timeSeconds: number;
+  label: string;
+  peakDb?: number;
+}
 
 export interface AudioRecordingTake {
   id: string;
@@ -194,6 +243,7 @@ export interface AudioRecordingTake {
   durationSeconds: number;
   durationSec: number;
   format: string;
+  bitsPerSample?: 16 | 32;
   quality?: RecordingQuality;
   source: RecordingSource;
   sampleRate: number;
@@ -206,6 +256,7 @@ export interface AudioRecordingTake {
   peakDb: number;
   isClipped?: boolean;
   isNormalized?: boolean;
+  cueMarkers?: WavCueMarker[];
 }
 
 export interface StudioRecorderSettings {

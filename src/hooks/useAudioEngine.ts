@@ -5,7 +5,8 @@ import {
   VisualizerSettings,
   SignalGeneratorState,
   FrequencyIsolatorState,
-  SignalGeneratorWaveform
+  SignalGeneratorWaveform,
+  FrequencyWeighting
 } from '../types';
 import { SAMPLE_TRACKS, generateSampleAudioBuffer, calculateAudioMetrics } from '../utils/audioPresets';
 import { generatePinkNoiseBuffer, generateWhiteNoiseBuffer } from '../utils/frequencyTools';
@@ -38,6 +39,9 @@ export function useAudioEngine(settings: VisualizerSettings) {
   });
 
   const [loadedFile, setLoadedFile] = useState<File | null>(null);
+  const [weighting, setWeighting] = useState<FrequencyWeighting>('Z');
+  const weightingRef = useRef<FrequencyWeighting>(weighting);
+  weightingRef.current = weighting;
 
   const [metrics, setMetrics] = useState<AudioMetrics>({
     peakFrequencyHz: 0,
@@ -46,6 +50,9 @@ export function useAudioEngine(settings: VisualizerSettings) {
     prominenceDb: -100,
     spectralCentroidHz: 0,
     rmsDb: -100,
+    rmsDba: -100,
+    rmsDbc: -100,
+    weighting: 'Z',
     peakDb: -100,
     crestFactorDb: 0,
     subBass: 0,
@@ -123,6 +130,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const frequencyDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const timeDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const floatTimeDataRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const floatFrequencyDataRef = useRef<Float32Array<ArrayBuffer> | null>(null);
 
   // Initialize Audio Context and Audio Graph
   const initAudioGraph = useCallback(() => {
@@ -211,6 +219,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
       frequencyDataRef.current = new Uint8Array(bufferLength);
       timeDataRef.current = new Uint8Array(bufferLength);
       floatTimeDataRef.current = new Float32Array(analyser.fftSize);
+      floatFrequencyDataRef.current = new Float32Array(bufferLength);
     }
 
     if (audioCtxRef.current.state === 'suspended') {
@@ -230,6 +239,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
       frequencyDataRef.current = new Uint8Array(bufferLength);
       timeDataRef.current = new Uint8Array(bufferLength);
       floatTimeDataRef.current = new Float32Array(analyserRef.current.fftSize);
+      floatFrequencyDataRef.current = new Float32Array(bufferLength);
     }
   }, [settings.fftSize, settings.smoothing, settings.minDecibels, settings.maxDecibels]);
 
@@ -944,14 +954,21 @@ export function useAudioEngine(settings: VisualizerSettings) {
           if (floatTimeDataRef.current) {
             analyserRef.current.getFloatTimeDomainData(floatTimeDataRef.current);
           }
+          if (floatFrequencyDataRef.current) {
+            analyserRef.current.getFloatFrequencyData(floatFrequencyDataRef.current);
+          }
           const sampleRate = audioCtxRef.current ? audioCtxRef.current.sampleRate : 44100;
+          const targetToneHz = signalGenStateRef.current.isActive ? signalGenStateRef.current.frequency : undefined;
           const calculated = calculateAudioMetrics(
             frequencyDataRef.current,
             sampleRate,
             currentSettings.fftSize,
             floatTimeDataRef.current,
             currentSettings.minDecibels,
-            currentSettings.maxDecibels
+            currentSettings.maxDecibels,
+            floatFrequencyDataRef.current,
+            weightingRef.current,
+            targetToneHz
           );
 
           setTimeout(() => {
@@ -963,12 +980,16 @@ export function useAudioEngine(settings: VisualizerSettings) {
               prominenceDb: calculated.prominenceDb,
               spectralCentroidHz: calculated.spectralCentroidHz,
               rmsDb: calculated.rmsDb,
+              rmsDba: calculated.rmsDba,
+              rmsDbc: calculated.rmsDbc,
+              weighting: calculated.weighting,
               peakDb: calculated.peakDb,
               crestFactorDb: calculated.crestFactorDb,
               subBass: calculated.subBass,
               bass: calculated.bass,
               mid: calculated.mid,
               treble: calculated.treble,
+              distortion: calculated.distortion,
             }));
           }, 0);
         }
@@ -1025,7 +1046,16 @@ export function useAudioEngine(settings: VisualizerSettings) {
     enableMicrophone,
     toggleMicMonitoring,
     getFrequencyData,
+    getFloatFrequencyData: useCallback(() => {
+      if (analyserRef.current && floatFrequencyDataRef.current) {
+        analyserRef.current.getFloatFrequencyData(floatFrequencyDataRef.current);
+        return floatFrequencyDataRef.current;
+      }
+      return new Float32Array(0);
+    }, []),
     getTimeDomainData,
+    weighting,
+    setWeighting,
     mediaStreamDestinationRef,
     loadedFile,
     // Frequency Generator & Isolator tools

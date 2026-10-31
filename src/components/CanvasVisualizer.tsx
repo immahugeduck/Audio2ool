@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { VisualizerSettings, AudioMetrics } from '../types';
+import { VisualizerSettings, AudioMetrics, SpectrogramColorMap } from '../types';
 import { COLOR_PRESETS, getPresetById, createCanvasGradient, getPeakColor } from '../utils/colorGradients';
 import { 
   frequencyToRatio, 
@@ -52,6 +52,89 @@ const blendHexColors = (color1: string, color2: string, ratio: number): string =
   const b = Math.round(b1 + (b2 - b1) * ratio);
   
   return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+};
+
+/**
+ * Scientific Perceptual Colormap Transfer Function for 2D Spectrogram & 3D Waterfall
+ */
+const mapSpectrogramColor = (tRaw: number, colormap: SpectrogramColorMap = 'thermal'): [number, number, number] => {
+  const t = Math.max(0, Math.min(1, tRaw));
+
+  if (colormap === 'viridis') {
+    // ISO Perceptually Uniform Viridis: Deep Purple -> Blue -> Teal -> Green -> Yellow
+    if (t < 0.25) {
+      const u = t / 0.25;
+      return [Math.round(68 + (59 - 68) * u), Math.round(1 + (82 - 1) * u), Math.round(84 + (139 - 84) * u)];
+    } else if (t < 0.5) {
+      const u = (t - 0.25) / 0.25;
+      return [Math.round(59 + (33 - 59) * u), Math.round(82 + (145 - 82) * u), Math.round(139 + (140 - 139) * u)];
+    } else if (t < 0.75) {
+      const u = (t - 0.5) / 0.25;
+      return [Math.round(33 + (94 - 33) * u), Math.round(145 + (201 - 145) * u), Math.round(140 + (98 - 140) * u)];
+    } else {
+      const u = (t - 0.75) / 0.25;
+      return [Math.round(94 + (253 - 94) * u), Math.round(201 + (231 - 201) * u), Math.round(98 + (37 - 98) * u)];
+    }
+  }
+
+  if (colormap === 'inferno') {
+    // High-contrast laboratory Inferno: Black -> Dark Purple -> Crimson -> Orange -> Bright Yellow
+    if (t < 0.25) {
+      const u = t / 0.25;
+      return [Math.round(4 + 83 * u), Math.round(3 + 13 * u), Math.round(20 + 87 * u)];
+    } else if (t < 0.5) {
+      const u = (t - 0.25) / 0.25;
+      return [Math.round(87 + 99 * u), Math.round(16 + 39 * u), Math.round(107 - 21 * u)];
+    } else if (t < 0.75) {
+      const u = (t - 0.5) / 0.25;
+      return [Math.round(186 + 63 * u), Math.round(55 + 85 * u), Math.round(86 - 76 * u)];
+    } else {
+      const u = (t - 0.75) / 0.25;
+      return [Math.round(249 + 6 * u), Math.round(140 + 115 * u), Math.round(10 + 154 * u)];
+    }
+  }
+
+  if (colormap === 'magma') {
+    // Magma Acoustic: Obsidian -> Indigo -> Magenta -> Coral -> Pale Yellow
+    if (t < 0.25) {
+      const u = t / 0.25;
+      return [Math.round(5 + 75 * u), Math.round(4 + 14 * u), Math.round(24 + 98 * u)];
+    } else if (t < 0.5) {
+      const u = (t - 0.25) / 0.25;
+      return [Math.round(80 + 105 * u), Math.round(18 + 37 * u), Math.round(122 + 3 * u)];
+    } else if (t < 0.75) {
+      const u = (t - 0.5) / 0.25;
+      return [Math.round(185 + 66 * u), Math.round(55 + 80 * u), Math.round(125 - 30 * u)];
+    } else {
+      const u = (t - 0.75) / 0.25;
+      return [Math.round(251 + 4 * u), Math.round(135 + 118 * u), Math.round(95 + 105 * u)];
+    }
+  }
+
+  if (colormap === 'matrix') {
+    // Phosphor CRT Sonar Green
+    if (t < 0.15) {
+      const u = t / 0.15;
+      return [2, Math.round(8 + 35 * u), Math.round(6 + 15 * u)];
+    } else if (t < 0.7) {
+      const u = (t - 0.15) / 0.55;
+      return [Math.round(10 + 30 * u), Math.round(43 + 185 * u), Math.round(21 + 60 * u)];
+    } else {
+      const u = (t - 0.7) / 0.3;
+      return [Math.round(40 + 190 * u), Math.round(228 + 27 * u), Math.round(81 + 140 * u)];
+    }
+  }
+
+  // Default: 'thermal' (Navy -> Cyan -> Gold -> Hot Pink)
+  if (t < 0.1) {
+    return [Math.floor(9 + t * 100), Math.floor(13 + t * 100), Math.floor(22 + t * 300)];
+  } else if (t < 0.4) {
+    return [Math.floor((t - 0.1) * 3 * 30), Math.floor(100 + (t - 0.1) * 3 * 155), 210];
+  } else if (t < 0.75) {
+    return [255, Math.floor(160 + (t - 0.4) * 2.8 * 95), Math.floor(30 + (t - 0.4) * 2.8 * 80)];
+  } else {
+    return [255, Math.floor(255 - (t - 0.75) * 4 * 180), Math.floor(200 + (t - 0.75) * 4 * 55)];
+  }
 };
 
 const LAYER_COLORS = [
@@ -278,8 +361,8 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         containerRef.current.style.boxShadow = '';
       }
 
-      const preset = getPresetById(settings.colorPresetId);
-      const peakColor = getPeakColor(preset, settings.customGradient, settings.useCustomGradient);
+      const preset = getPresetById(settings.spectrogramColorMap || settings.colorPresetId);
+      const peakColor = getPeakColor(preset, settings.customGradient, false);
 
       // Smooth & subtle background reactive ambient glow (toned down)
       if (settings.reactiveColors && metrics.bass > 40) {
@@ -304,6 +387,11 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       const plotBottomY = height - 35;
       const plotHeight = Math.max(10, plotBottomY - plotTopY);
 
+      // Active Sub-Band Frequency Span
+      const minHz = Math.max(20, settings.minFreqHz || 20);
+      const maxHz = Math.min(20000, Math.max(minHz + 50, settings.maxFreqHz || 20000));
+      const colorMap = settings.spectrogramColorMap || 'thermal';
+
       // -------------------------------------------------------------
       // DRAW SAVED REFERENCE SPECTRUM LAYERS
       // -------------------------------------------------------------
@@ -318,7 +406,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
             const ratio = i / (pointsCount - 1);
             const ratioStart = Math.max(0, ratio - 0.5 / pointsCount);
             const ratioEnd = Math.min(1, ratio + 0.5 / pointsCount);
-            const rawValue = getMagnitudeForRatio(layer.data, ratioStart, ratioEnd, settings.logScale, sampleRate, layer.data.length);
+            const rawValue = getMagnitudeForRatio(layer.data, ratioStart, ratioEnd, settings.logScale, sampleRate, layer.data.length, minHz, maxHz);
             const normalized = Math.min(1.0, (rawValue / 255) * settings.sensitivity);
             const h = normalized * plotHeight;
 
@@ -380,7 +468,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         for (let i = 0; i < numBars; i++) {
           const ratioStart = i / numBars;
           const ratioEnd = (i + 1) / numBars;
-          const rawValue = getMagnitudeForRatio(freqData, ratioStart, ratioEnd, settings.logScale, sampleRate, binCount);
+          const rawValue = getMagnitudeForRatio(freqData, ratioStart, ratioEnd, settings.logScale, sampleRate, binCount, minHz, maxHz);
           const normalized = Math.min(1.0, (rawValue / 255) * settings.sensitivity);
           const barHeight = Math.max(2, normalized * plotHeight);
 
@@ -438,7 +526,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           const ratio = i / (pointsCount - 1);
           const ratioStart = Math.max(0, ratio - 0.5 / pointsCount);
           const ratioEnd = Math.min(1, ratio + 0.5 / pointsCount);
-          const rawValue = getMagnitudeForRatio(freqData, ratioStart, ratioEnd, settings.logScale, sampleRate, binCount);
+          const rawValue = getMagnitudeForRatio(freqData, ratioStart, ratioEnd, settings.logScale, sampleRate, binCount, minHz, maxHz);
           const normalized = Math.min(1.0, (rawValue / 255) * settings.sensitivity);
           const h = normalized * plotHeight;
 
@@ -588,27 +676,17 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           for (let i = 0; i < numBins; i++) {
             const ratioStart = i / numBins;
             const ratioEnd = (i + 1) / numBins;
-            const rawVal = getMagnitudeForRatio(frameData, ratioStart, ratioEnd, settings.logScale, sampleRate, frameData.length);
+            const rawVal = getMagnitudeForRatio(frameData, ratioStart, ratioEnd, settings.logScale, sampleRate, frameData.length, minHz, maxHz);
             const normalized = (rawVal / 255) * settings.sensitivity;
             const barH = normalized * (120 * scale); // 3D mountain peak height displacement
 
             const px = startX + (i / (numBins - 1 || 1)) * frameWidth;
             const py = frameBaseY - barH;
 
-            // Compute vertex color based on amplitude value
+            // Compute vertex color using active scientific colormap
             const valNorm = Math.min(1.0, normalized);
-            let vertexColor = '#00f0ff';
-            if (preset.colors.length >= 3) {
-              if (valNorm < 0.4) {
-                vertexColor = blendHexColors(preset.colors[0], preset.colors[1], valNorm / 0.4);
-              } else {
-                vertexColor = blendHexColors(preset.colors[1], preset.colors[2], (valNorm - 0.4) / 0.6);
-              }
-            } else if (preset.colors.length === 2) {
-              vertexColor = blendHexColors(preset.colors[0], preset.colors[1], valNorm);
-            } else {
-              vertexColor = preset.colors[0] || '#00f0ff';
-            }
+            const [cr, cg, cb] = mapSpectrogramColor(valNorm, colorMap);
+            const vertexColor = `rgb(${cr},${cg},${cb})`;
 
             frameRow.push({ x: px, y: py, val: rawVal, color: vertexColor });
           }
@@ -665,9 +743,18 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
           
           // Symmetrical linear gradient for the crest line
           const crestGradient = ctx.createLinearGradient(row[0].x, 0, row[numBins - 1].x, 0);
-          preset.colors.forEach((c, idx) => {
-            crestGradient.addColorStop(idx / (preset.colors.length - 1 || 1), c);
-          });
+          if (colorMap !== 'thermal') {
+            const [r0, g0, b0] = mapSpectrogramColor(0.35, colorMap);
+            const [r1, g1, b1] = mapSpectrogramColor(0.65, colorMap);
+            const [r2, g2, b2] = mapSpectrogramColor(0.95, colorMap);
+            crestGradient.addColorStop(0, `rgb(${r0},${g0},${b0})`);
+            crestGradient.addColorStop(0.5, `rgb(${r1},${g1},${b1})`);
+            crestGradient.addColorStop(1, `rgb(${r2},${g2},${b2})`);
+          } else {
+            preset.colors.forEach((c, idx) => {
+              crestGradient.addColorStop(idx / (preset.colors.length - 1 || 1), c);
+            });
+          }
 
           ctx.strokeStyle = crestGradient;
           ctx.lineWidth = Math.max(1.0, 2.2 * scale);
@@ -709,34 +796,11 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
 
             // Render new line at top (y=0)
             for (let x = 0; x < width; x++) {
-              const binIdx = getBinForRatio(x / width, settings.logScale, sampleRate, binCount);
+              const binIdx = getBinForRatio(x / width, settings.logScale, sampleRate, binCount, minHz, maxHz);
               const intensity = freqData[binIdx] || 0;
 
-              // Enhanced Thermal / Plasma Color Mapping for Spectrogram Noise Floor Tracking
-              let r = 0, g = 0, b = 0;
               const normalized = Math.min(1.0, (intensity / 255) * settings.sensitivity);
-
-              if (normalized < 0.1) {
-                // Noise Floor / Silence: Deep Navy / Charcoal
-                r = Math.floor(9 + normalized * 100);
-                g = Math.floor(13 + normalized * 100);
-                b = Math.floor(22 + normalized * 300);
-              } else if (normalized < 0.4) {
-                // Low level ambient: Cyan / Teal
-                r = Math.floor((normalized - 0.1) * 3 * 30);
-                g = Math.floor(100 + (normalized - 0.1) * 3 * 155);
-                b = 210;
-              } else if (normalized < 0.75) {
-                // Mid level sound: Bright Yellow / Gold
-                r = 255;
-                g = Math.floor(160 + (normalized - 0.4) * 2.8 * 95);
-                b = Math.floor(30 + (normalized - 0.4) * 2.8 * 80);
-              } else {
-                // High transient spike: Intense Magenta / Hot Pink
-                r = 255;
-                g = Math.floor(255 - (normalized - 0.75) * 4 * 180);
-                b = Math.floor(200 + (normalized - 0.75) * 4 * 55);
-              }
+              const [r, g, b] = mapSpectrogramColor(normalized, colorMap);
 
               sCtx.fillStyle = `rgb(${r},${g},${b})`;
               sCtx.fillRect(x, 0, 1, 2);
@@ -1002,9 +1066,11 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         ctx.font = '10px monospace';
         ctx.textAlign = 'center';
 
-        const hzMarkers = settings.logScale
-          ? [20, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 20000]
-          : [1000, 2500, 5000, 7500, 10000, 12500, 15000, 17500, 20000];
+        const allCandidateHz = [
+          20, 30, 40, 50, 60, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800,
+          1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000,
+        ];
+        const filteredMarkers = allCandidateHz.filter((hz) => hz >= minHz && hz <= maxHz);
 
         // Bottom axis border line
         ctx.strokeStyle = 'rgba(51, 65, 85, 0.6)';
@@ -1013,11 +1079,13 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         ctx.lineTo(width, plotBottomY + 2);
         ctx.stroke();
 
-        hzMarkers.forEach((hz) => {
-          const ratio = frequencyToRatio(hz, settings.logScale);
+        let lastLabelX = -100;
+        filteredMarkers.forEach((hz) => {
+          const ratio = frequencyToRatio(hz, settings.logScale, minHz, maxHz);
           const labelX = ratio * width;
-          if (labelX >= 10 && labelX <= width - 10) {
-            const labelText = hz >= 1000 ? `${hz / 1000}k` : `${hz}`;
+          if (labelX >= 14 && labelX <= width - 14 && labelX - lastLabelX >= 42) {
+            lastLabelX = labelX;
+            const labelText = hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1)}k` : `${hz}`;
             ctx.fillText(labelText, labelX, height - 12);
 
             // Tick line
@@ -1034,7 +1102,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         ctx.font = '10px monospace';
         ctx.textAlign = 'left';
 
-        const dbSteps = [-3, -6, -12, -24, -36, -48, -60];
+        const dbSteps = [0, -3, -6, -12, -18, -24, -36, -48, -60, -72, -84, -96];
         dbSteps.forEach((db) => {
           if (db >= settings.minDecibels && db <= settings.maxDecibels) {
             const norm = (db - settings.minDecibels) / (settings.maxDecibels - settings.minDecibels);
@@ -1064,7 +1132,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
 
         if (hx >= 0 && hx <= width && hy >= plotTopY && hy <= plotBottomY) {
           const ratio = Math.max(0, Math.min(1, hx / width));
-          const hoverHz = Math.round(ratioToFrequency(ratio, settings.logScale));
+          const hoverHz = Math.round(ratioToFrequency(ratio, settings.logScale, minHz, maxHz));
           const bin = frequencyToBin(hoverHz, sampleRate, binCount);
           const mag = freqData[bin] || 0;
           const hoverDb = Math.round(settings.minDecibels + (mag / 255) * (settings.maxDecibels - settings.minDecibels));

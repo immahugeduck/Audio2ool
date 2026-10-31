@@ -2,28 +2,25 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { VisualizerSettings, AiNoiseDetectionResult } from './types';
 import { useAudioEngine } from './hooks/useAudioEngine';
 import { useNoiseBaseline } from './hooks/useNoiseBaseline';
-import { Header } from './components/Header';
+import { Sidebar } from './components/Sidebar';
+import { SettingsDrawer } from './components/SettingsDrawer';
 import { CanvasVisualizer } from './components/CanvasVisualizer';
 import { AudioControls } from './components/AudioControls';
 import { VisualizerControls } from './components/VisualizerControls';
-import { ColorGradientPicker } from './components/ColorGradientPicker';
 import { EqualizerPanel } from './components/EqualizerPanel';
-import { AiNoiseDetector } from './components/AiNoiseDetector';
 import { NoiseBaselineMonitor } from './components/NoiseBaselineMonitor';
 import { AcousticGuide } from './components/AcousticGuide';
 import { ReportExporter } from './components/ReportExporter';
 import { AudioMeters } from './components/AudioMeters';
 import { DropZone } from './components/DropZone';
-import { TranscriptionPanel } from './components/TranscriptionPanel';
 import { SoundTimelineProfiler } from './components/SoundTimelineProfiler';
 import { AcousticRoomRt60 } from './components/AcousticRoomRt60';
 import { HarmonicTuner } from './components/HarmonicTuner';
 import { EventAnomalyLog } from './components/EventAnomalyLog';
 import { UrlAudioAnalyzer } from './components/UrlAudioAnalyzer';
-import { MicSettingsSelector } from './components/MicSettingsSelector';
 import { FrequencyToolsPanel } from './components/FrequencyToolsPanel';
 import { StudioRecorder } from './components/StudioRecorder';
-import { Mic, Music, Volume2, Sliders, Disc, Radio } from 'lucide-react';
+import { Music, Sliders, Disc, Settings, Mic } from 'lucide-react';
 
 export default function App() {
   const [settings, setSettings] = useState<VisualizerSettings>({
@@ -35,11 +32,11 @@ export default function App() {
     showHzScale: true,
     showDbGrid: true,
     showPeaks: true,
-    colorPresetId: 'cyberpunk',
+    colorPresetId: 'thermal',
     customGradient: {
-      start: '#00f0ff',
-      middle: '#7000ff',
-      end: '#ff007f',
+      start: '#06b6d4',
+      middle: '#eab308',
+      end: '#ec4899',
       peak: '#ffffff',
     },
     useCustomGradient: false,
@@ -50,17 +47,28 @@ export default function App() {
     fillOpacity: 0.6,
     barSpacing: 3,
     barWidthMultiplier: 1.0,
+    zoomPreset: 'full',
+    minFreqHz: 20,
+    maxFreqHz: 20000,
+    spectrogramColorMap: 'thermal',
   });
 
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
-  const [latestAiResult, setLatestAiResult] = useState<AiNoiseDetectionResult | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'color' | 'mic' | 'audio'>('color');
+  const [latestAiResult] = useState<AiNoiseDetectionResult | null>(null);
 
-  // Tab State: 'live' | 'media' | 'tools' | 'recorder'
+  // Workspace View State: 'live' | 'media' | 'tools' | 'recorder'
   const [activeTab, setActiveTab] = useState<'live' | 'media' | 'tools' | 'recorder'>('live');
 
   const updateSettings = useCallback((partial: Partial<VisualizerSettings>) => {
     setSettings((prev) => ({ ...prev, ...partial }));
+  }, []);
+
+  const openSettingsDrawer = useCallback((section: 'color' | 'mic' | 'audio' = 'color') => {
+    setSettingsSection(section);
+    setIsSettingsOpen(true);
   }, []);
 
   const {
@@ -80,9 +88,10 @@ export default function App() {
     enableMicrophone,
     toggleMicMonitoring,
     getFrequencyData,
+    getFloatFrequencyData,
     getTimeDomainData,
-    mediaStreamDestinationRef,
-    loadedFile,
+    weighting,
+    setWeighting,
     // Frequency Generator & Isolator tools
     signalGenState,
     startSignalGen,
@@ -96,344 +105,303 @@ export default function App() {
     getMicStream,
   } = useAudioEngine(settings);
 
-  // Feature #1: Long-term noise baseline profiling
-  const { profile, isCalibrating, startCalibration, resetTransients, setTransientSensitivity } = useNoiseBaseline(
+  // Long-term noise baseline profiling & calibration
+  const {
+    profile,
+    isCalibrating,
+    startCalibration,
+    resetTransients,
+    setTransientSensitivity,
+  } = useNoiseBaseline(
     getFrequencyData,
     metrics,
     engineState.sourceType === 'mic' || engineState.isPlaying
   );
 
-  // Tab Switcher Side Effects:
-  // - When switching to 'live', auto-enable live microphone.
-  // - When switching to 'media', load default sample track if nothing is loaded.
+  // Auto-enable live microphone in Live Visualizer mode, or sample track in Media mode
   useEffect(() => {
     if (activeTab === 'live') {
       enableMicrophone();
-    } else if (activeTab === 'media' && engineState.sourceType !== 'file' && engineState.sourceType !== 'url') {
+    } else if (
+      activeTab === 'media' &&
+      engineState.sourceType !== 'file' &&
+      engineState.sourceType !== 'url'
+    ) {
       loadSampleTrack('synthwave');
     }
   }, [activeTab, enableMicrophone, loadSampleTrack, engineState.sourceType]);
 
   return (
     <DropZone onFileDrop={loadAudioFile}>
-      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6">
-          
-          {/* Header */}
-          <Header
-            sourceType={engineState.sourceType}
-            metrics={metrics}
-            activeTab={activeTab}
-            onSelectTab={setActiveTab}
-            onOpenGuide={() => setIsGuideOpen(true)}
-            onOpenReport={() => setIsReportOpen(true)}
-          />
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased flex flex-col lg:flex-row selection:bg-cyan-500 selection:text-slate-950">
+        {/* Persistent Left Sidebar: Status Indicators, High-Frequency Telemetry & Global Controls */}
+        <Sidebar
+          engineState={engineState}
+          metrics={metrics}
+          settings={settings}
+          weighting={weighting}
+          setWeighting={setWeighting}
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+          enableMicrophone={enableMicrophone}
+          toggleMicMonitoring={toggleMicMonitoring}
+          profile={profile}
+          isCalibrating={isCalibrating}
+          startCalibration={startCalibration}
+          onOpenSettings={openSettingsDrawer}
+          onOpenGuide={() => setIsGuideOpen(true)}
+          onOpenReport={() => setIsReportOpen(true)}
+        />
 
-          {/* Main Visualizer Top Stage Canvas */}
-          <CanvasVisualizer
-            settings={settings}
-            getFrequencyData={getFrequencyData}
-            getTimeDomainData={getTimeDomainData}
-            metrics={metrics}
-            isPlaying={engineState.isPlaying}
-            sampleRate={getAudioContext()?.sampleRate || 44100}
-          />
+        {/* Primary Main Content Area (Isolated from High-Frequency Sidebar Telemetry) */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <div className="max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 flex flex-col gap-5 flex-1">
+            {/* 1. Primary Spectrum, Oscilloscope, 3D Waterfall & 2D Heatmap Graph */}
+            <CanvasVisualizer
+              settings={settings}
+              getFrequencyData={getFrequencyData}
+              getTimeDomainData={getTimeDomainData}
+              metrics={metrics}
+              isPlaying={engineState.isPlaying}
+              sampleRate={getAudioContext()?.sampleRate || 44100}
+            />
 
-          {/* ============================================================== */}
-          {/* GRAPH & VIEW CONTROLS (DIRECTLY UNDERNEATH VISUALIZER) */}
-          {/* ============================================================== */}
-          <div className="flex flex-col gap-5">
-            {/* Visualizer Mode & Parameter Controls */}
-            <VisualizerControls settings={settings} updateSettings={updateSettings} />
+            {/* 2. Visualizer Views, Frequency Span Zoom & Scope Calibration Bar */}
+            <VisualizerControls
+              settings={settings}
+              updateSettings={updateSettings}
+              onOpenSettings={openSettingsDrawer}
+            />
 
-            {/* Neon Palettes & Custom Gradient Designer */}
-            <ColorGradientPicker settings={settings} updateSettings={updateSettings} />
+            {/* ============================================================== */}
+            {/* WORKSPACE CONTENT AREA */}
+            {/* ============================================================== */}
+            <main className="flex flex-col gap-5">
+              {/* VIEW 1: VISUALIZER, MIC INPUT FREQUENCIES & ROOM CALIBRATION */}
+              {activeTab === 'live' && (
+                <div className="flex flex-col gap-5">
+                  {/* Multi-Band Frequency Energy & THD Telemetry */}
+                  <AudioMeters
+                    metrics={metrics}
+                    weighting={weighting}
+                    setWeighting={setWeighting}
+                  />
 
-            {/* Multi-Band VU & Precision RMS / Peak Telemetry */}
-            <AudioMeters metrics={metrics} />
+                  {/* Mic Input Frequencies, Pitch Calibration & Room Floor Calibration */}
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+                    {/* Left Column: Mic Input Frequencies, Harmonic Pitch Tuner & Energy Timeline */}
+                    <div className="xl:col-span-6 flex flex-col gap-5">
+                      <HarmonicTuner
+                        metrics={metrics}
+                        getFrequencyData={getFrequencyData}
+                        sampleRate={getAudioContext()?.sampleRate || 44100}
+                      />
+
+                      <SoundTimelineProfiler
+                        metrics={metrics}
+                        isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
+                        getFrequencyData={getFrequencyData}
+                      />
+                    </div>
+
+                    {/* Right Column: Room Noise Floor Calibration, RT60 Decay & Impulse Log */}
+                    <div className="xl:col-span-6 flex flex-col gap-5">
+                      <NoiseBaselineMonitor
+                        profile={profile}
+                        metrics={metrics}
+                        isCalibrating={isCalibrating}
+                        startCalibration={startCalibration}
+                        resetTransients={resetTransients}
+                        setTransientSensitivity={setTransientSensitivity}
+                        isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
+                      />
+
+                      <AcousticRoomRt60
+                        metrics={metrics}
+                        isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
+                        getFrequencyData={getFrequencyData}
+                        sampleRate={getAudioContext()?.sampleRate || 44100}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* VIEW 2: PRECISION FREQUENCY WORKBENCH & ISO 1/3-OCTAVE RTA */}
+              {activeTab === 'tools' && (
+                <div className="flex flex-col gap-5">
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2 text-sm font-bold text-amber-300">
+                      <Sliders className="w-4 h-4 text-amber-400" />
+                      <span>Frequency Workbench, ISO 1/3-Octave RTA &amp; THD Analyzer</span>
+                    </div>
+                    <button
+                      onClick={() => openSettingsDrawer('audio')}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer"
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                      <span>Open 10-Band EQ &amp; Audio Settings</span>
+                    </button>
+                  </div>
+
+                  <FrequencyToolsPanel
+                    signalGenState={signalGenState}
+                    startSignalGen={startSignalGen}
+                    stopSignalGen={stopSignalGen}
+                    updateSignalGen={updateSignalGen}
+                    isolatorState={isolatorState}
+                    updateIsolator={updateIsolator}
+                    getFrequencyData={getFrequencyData}
+                    getFloatFrequencyData={getFloatFrequencyData}
+                    metrics={metrics}
+                    sampleRate={getAudioContext()?.sampleRate || 44100}
+                  />
+
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+                    <div className="xl:col-span-6">
+                      <HarmonicTuner
+                        metrics={metrics}
+                        getFrequencyData={getFrequencyData}
+                        sampleRate={getAudioContext()?.sampleRate || 44100}
+                      />
+                    </div>
+                    <div className="xl:col-span-6">
+                      <EqualizerPanel
+                        engineState={engineState}
+                        setEq={setEq}
+                        setPlaybackRate={setPlaybackRate}
+                        setPan={setPan}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* VIEW 3: MEDIA FILE & STREAM VISUALIZER */}
+              {activeTab === 'media' && (
+                <div className="flex flex-col gap-5">
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2 text-sm font-bold text-cyan-300">
+                      <Music className="w-4 h-4 text-cyan-400" />
+                      <span>Media File &amp; Stream Spectrum Analysis</span>
+                    </div>
+                    <button
+                      onClick={() => openSettingsDrawer('audio')}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer"
+                    >
+                      <Settings className="w-3.5 h-3.5" />
+                      <span>Audio &amp; EQ Settings</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+                    <div className="xl:col-span-6 flex flex-col gap-5">
+                      <AudioControls
+                        engineState={engineState}
+                        play={play}
+                        pause={pause}
+                        seek={seek}
+                        setVolume={setVolume}
+                        toggleMute={toggleMute}
+                        loadSampleTrack={loadSampleTrack}
+                        loadAudioFile={loadAudioFile}
+                        enableMicrophone={enableMicrophone}
+                        toggleMicMonitoring={toggleMicMonitoring}
+                      />
+
+                      <UrlAudioAnalyzer
+                        engineState={engineState}
+                        loadAudioFromUrl={loadAudioFromUrl}
+                        loadSampleTrack={loadSampleTrack}
+                        enableMicrophone={enableMicrophone}
+                        play={play}
+                        pause={pause}
+                      />
+                    </div>
+
+                    <div className="xl:col-span-6 flex flex-col gap-5">
+                      <HarmonicTuner
+                        metrics={metrics}
+                        getFrequencyData={getFrequencyData}
+                        sampleRate={getAudioContext()?.sampleRate || 44100}
+                      />
+
+                      <EventAnomalyLog
+                        metrics={metrics}
+                        currentTime={engineState.currentTime}
+                        isPlaying={engineState.isPlaying}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* VIEW 4: STUDIO WAV RECORDER */}
+              {activeTab === 'recorder' && (
+                <div className="flex flex-col gap-5">
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2 text-sm font-bold text-rose-300">
+                      <Disc className="w-4 h-4 text-rose-400" />
+                      <span>Studio 32-Bit Float &amp; 16-Bit PCM WAV Recorder</span>
+                    </div>
+                    <button
+                      onClick={() => openSettingsDrawer('mic')}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer"
+                    >
+                      <Mic className="w-3.5 h-3.5" />
+                      <span>Mic Input Settings</span>
+                    </button>
+                  </div>
+
+                  <StudioRecorder
+                    getMasterStream={getMasterStream}
+                    getMicStream={getMicStream}
+                    getAudioContext={getAudioContext}
+                    enableMicrophone={enableMicrophone}
+                    loadAudioFile={loadAudioFile}
+                  />
+                </div>
+              )}
+            </main>
           </div>
-
-          {/* ============================================================== */}
-          {/* TWO-PAGE EQUIPMENT WORKSPACE */}
-          {/* ============================================================== */}
-          <main className="flex flex-col gap-6 pt-2">
-            
-            {/* PAGE 1: LIVE MIC & ACOUSTIC STUDIO EQUIPMENT */}
-            {activeTab === 'live' && (
-              <div className="flex flex-col gap-6 animate-fadeIn">
-                <div className="flex items-center justify-between px-2">
-                  <div className="flex items-center gap-2 text-sm font-bold text-rose-300">
-                    <Mic className="w-4 h-4 text-rose-400" />
-                    <span>LIVE ACOUSTIC HARDWARE & DIAGNOSTIC EQUIPMENT</span>
-                  </div>
-                  <span className="text-xs text-slate-400 font-mono">Microphone Channel & Room Acoustics</span>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {/* Left Column (Hardware & Room Acoustics) */}
-                  <div className="lg:col-span-6 flex flex-col gap-6">
-                    {/* 1. Hardware Mic & Device Selector */}
-                    <MicSettingsSelector
-                      engineState={engineState}
-                      enableMicrophone={enableMicrophone}
-                      toggleMicMonitoring={toggleMicMonitoring}
-                      metrics={metrics}
-                    />
-
-                    {/* 2. Room Noise Floor Baseline & SNR Monitor */}
-                    <NoiseBaselineMonitor
-                      profile={profile}
-                      metrics={metrics}
-                      isCalibrating={isCalibrating}
-                      startCalibration={startCalibration}
-                      resetTransients={resetTransients}
-                      setTransientSensitivity={setTransientSensitivity}
-                      isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
-                    />
-
-                    {/* 3. Room Acoustic RT60 Reverb Decay Measurement */}
-                    <AcousticRoomRt60
-                      metrics={metrics}
-                      isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
-                      getFrequencyData={getFrequencyData}
-                      sampleRate={getAudioContext()?.sampleRate || 44100}
-                    />
-
-                    {/* 4. Live Voice & Speech Transcription Panel */}
-                    <TranscriptionPanel
-                      mediaStreamDestinationRef={mediaStreamDestinationRef}
-                      engineState={engineState}
-                      loadedFile={loadedFile}
-                    />
-                  </div>
-
-                  {/* Right Column (AI Intelligence, Pitch Tuning & Anomaly Tracking) */}
-                  <div className="lg:col-span-6 flex flex-col gap-6">
-                    {/* 1. AI Real-Time Sound Classifier */}
-                    <AiNoiseDetector
-                      engineState={engineState}
-                      metrics={metrics}
-                      enableMicrophone={enableMicrophone}
-                      onDetectResult={setLatestAiResult}
-                    />
-
-                    {/* 2. Harmonic Musical Tuner & Fundamental Pitch */}
-                    <HarmonicTuner
-                      metrics={metrics}
-                      getFrequencyData={getFrequencyData}
-                      sampleRate={getAudioContext()?.sampleRate || 44100}
-                    />
-
-                    {/* 3. Sound Timeline Energy Profiler */}
-                    <SoundTimelineProfiler
-                      metrics={metrics}
-                      isListening={engineState.sourceType === 'mic' || engineState.isPlaying}
-                      getFrequencyData={getFrequencyData}
-                    />
-
-                    {/* 4. Sound Event & Transient Anomaly Log */}
-                    <EventAnomalyLog
-                      metrics={metrics}
-                      currentTime={engineState.currentTime}
-                      isPlaying={engineState.isPlaying || engineState.sourceType === 'mic'}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* PAGE 2: MEDIA FILE, URL STREAM & PLAYBACK EQUIPMENT */}
-            {activeTab === 'media' && (
-              <div className="flex flex-col gap-6 animate-fadeIn">
-                <div className="flex items-center justify-between px-2">
-                  <div className="flex items-center gap-2 text-sm font-bold text-cyan-300">
-                    <Music className="w-4 h-4 text-cyan-400" />
-                    <span>MEDIA FILE & DIRECT URL STREAMING EQUIPMENT</span>
-                  </div>
-                  <span className="text-xs text-slate-400 font-mono">Audio Deck, EQ & Media Analysis</span>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {/* Left Column (Playback Deck, URL Analyzer, Equalizer) */}
-                  <div className="lg:col-span-6 flex flex-col gap-6">
-                    {/* 1. Direct URL & YouTube Audio Streamer */}
-                    <UrlAudioAnalyzer
-                      engineState={engineState}
-                      loadAudioFromUrl={loadAudioFromUrl}
-                      loadSampleTrack={loadSampleTrack}
-                      enableMicrophone={enableMicrophone}
-                      play={play}
-                      pause={pause}
-                    />
-
-                    {/* 2. Precision Transport & Track Deck */}
-                    <AudioControls
-                      engineState={engineState}
-                      play={play}
-                      pause={pause}
-                      seek={seek}
-                      setVolume={setVolume}
-                      toggleMute={toggleMute}
-                      loadSampleTrack={loadSampleTrack}
-                      loadAudioFile={loadAudioFile}
-                      enableMicrophone={enableMicrophone}
-                      toggleMicMonitoring={toggleMicMonitoring}
-                    />
-
-                    {/* 3. 10-Band Graphic Equalizer, Spatial Panner & Speed */}
-                    <EqualizerPanel
-                      engineState={engineState}
-                      setEq={setEq}
-                      setPlaybackRate={setPlaybackRate}
-                      setPan={setPan}
-                    />
-                  </div>
-
-                  {/* Right Column (Transcription, Profiling, Harmonics & Anomaly Tracker) */}
-                  <div className="lg:col-span-6 flex flex-col gap-6">
-                    {/* 1. Media Speech Transcription Panel */}
-                    <TranscriptionPanel
-                      mediaStreamDestinationRef={mediaStreamDestinationRef}
-                      engineState={engineState}
-                      loadedFile={loadedFile}
-                    />
-
-                    {/* 2. Media Harmonic Pitch & Key Detection */}
-                    <HarmonicTuner
-                      metrics={metrics}
-                      getFrequencyData={getFrequencyData}
-                    />
-
-                    {/* 3. Media Sound Timeline & Energy Profiler */}
-                    <SoundTimelineProfiler
-                      metrics={metrics}
-                      isListening={engineState.sourceType === 'file' || engineState.sourceType === 'sample' || engineState.isPlaying}
-                      getFrequencyData={getFrequencyData}
-                    />
-
-                    {/* 4. Playback Peak & Transient Anomaly Log */}
-                    <EventAnomalyLog
-                      metrics={metrics}
-                      currentTime={engineState.currentTime}
-                      isPlaying={engineState.isPlaying}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* PAGE 3: PRECISION FREQUENCY WORKBENCH & RTA */}
-            {activeTab === 'tools' && (
-              <div className="flex flex-col gap-6 animate-fadeIn">
-                <div className="flex items-center justify-between px-2">
-                  <div className="flex items-center gap-2 text-sm font-bold text-amber-300">
-                    <Sliders className="w-4 h-4 text-amber-400" />
-                    <span>PRECISION FREQUENCY WORKBENCH & ISO 1/3-OCTAVE RTA</span>
-                  </div>
-                  <span className="text-xs text-slate-400 font-mono">Test Signal Generator, Sweep Engine & Surgical Filter Isolator</span>
-                </div>
-
-                {/* Main Frequency Tools Panel */}
-                <FrequencyToolsPanel
-                  signalGenState={signalGenState}
-                  startSignalGen={startSignalGen}
-                  stopSignalGen={stopSignalGen}
-                  updateSignalGen={updateSignalGen}
-                  isolatorState={isolatorState}
-                  updateIsolator={updateIsolator}
-                  getFrequencyData={getFrequencyData}
-                  metrics={metrics}
-                  sampleRate={getAudioContext()?.sampleRate || 44100}
-                />
-
-                {/* Auxiliary Companion Analysis Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  <div className="lg:col-span-6 flex flex-col gap-6">
-                    {/* Harmonic Musical Pitch & Tuning Analysis */}
-                    <HarmonicTuner
-                      metrics={metrics}
-                      getFrequencyData={getFrequencyData}
-                      sampleRate={getAudioContext()?.sampleRate || 44100}
-                    />
-                  </div>
-                  <div className="lg:col-span-6 flex flex-col gap-6">
-                    {/* Equalizer & Master Panner */}
-                    <EqualizerPanel
-                      engineState={engineState}
-                      setEq={setEq}
-                      setPlaybackRate={setPlaybackRate}
-                      setPan={setPan}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* PAGE 4: HIGH-FIDELITY STUDIO AUDIO RECORDER */}
-            {activeTab === 'recorder' && (
-              <div className="flex flex-col gap-6 animate-fadeIn">
-                <div className="flex items-center justify-between px-2">
-                  <div className="flex items-center gap-2 text-sm font-bold text-rose-300">
-                    <Disc className="w-4 h-4 text-rose-400 animate-spin" />
-                    <span>STUDIO AUDIO RECORDER & TAKES VAULT</span>
-                  </div>
-                  <span className="text-xs text-slate-400 font-mono">16-Bit Linear PCM WAV, Broadcast Opus & Instant Spectra Re-Analysis</span>
-                </div>
-
-                {/* Studio Recorder Console & Takes Vault */}
-                <StudioRecorder
-                  getMasterStream={getMasterStream}
-                  getMicStream={getMicStream}
-                  getAudioContext={getAudioContext}
-                  enableMicrophone={enableMicrophone}
-                  loadAudioFile={loadAudioFile}
-                />
-
-                {/* Auxiliary Recording Profiler & Anomaly Log */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  <div className="lg:col-span-6 flex flex-col gap-6">
-                    <SoundTimelineProfiler
-                      metrics={metrics}
-                      isListening={true}
-                      getFrequencyData={getFrequencyData}
-                    />
-                  </div>
-                  <div className="lg:col-span-6 flex flex-col gap-6">
-                    <TranscriptionPanel
-                      mediaStreamDestinationRef={mediaStreamDestinationRef}
-                      engineState={engineState}
-                      loadedFile={loadedFile}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-          </main>
-
-          {/* Interactive Acoustic Diagnostic Guide Modal */}
-          <AcousticGuide isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
-
-          {/* Exportable Sound Audit Report Modal */}
-          <ReportExporter
-            metrics={metrics}
-            profile={profile}
-            latestAiResult={latestAiResult}
-            isOpen={isReportOpen}
-            onClose={() => setIsReportOpen(false)}
-          />
-
-          {/* Footer */}
-          <footer className="pt-6 border-t border-slate-800/60 text-center text-xs text-slate-500 flex items-center justify-between flex-wrap gap-2">
-            <span>
-              Professional Audio Analysis Suite &bull; Web Audio API &bull; Gemini 3.6 AI Noise Classifier
-            </span>
-            <div className="flex items-center gap-4 text-slate-400">
-              <span className="font-semibold text-cyan-500">Live Calibration Mode Default</span>
-            </div>
-          </footer>
-          
         </div>
+
+        {/* Slide-Out Settings Drawer (Heatmap Color Schemes, Mic Hardware & Audio/EQ) */}
+        <SettingsDrawer
+          isOpen={isSettingsOpen}
+          initialSection={settingsSection}
+          onClose={() => setIsSettingsOpen(false)}
+          settings={settings}
+          updateSettings={updateSettings}
+          engineState={engineState}
+          metrics={metrics}
+          enableMicrophone={enableMicrophone}
+          toggleMicMonitoring={toggleMicMonitoring}
+          weighting={weighting}
+          setWeighting={setWeighting}
+          profile={profile}
+          isCalibrating={isCalibrating}
+          startCalibration={startCalibration}
+          resetTransients={resetTransients}
+          setTransientSensitivity={setTransientSensitivity}
+          setVolume={setVolume}
+          toggleMute={toggleMute}
+          setEq={setEq}
+          setPlaybackRate={setPlaybackRate}
+          setPan={setPan}
+        />
+
+        {/* Interactive Acoustic Diagnostic Guide Modal */}
+        <AcousticGuide isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+
+        {/* Exportable Sound Audit Report Modal */}
+        <ReportExporter
+          metrics={metrics}
+          profile={profile}
+          latestAiResult={latestAiResult}
+          isOpen={isReportOpen}
+          onClose={() => setIsReportOpen(false)}
+        />
       </div>
     </DropZone>
   );
