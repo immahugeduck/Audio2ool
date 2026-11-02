@@ -2,6 +2,8 @@ export type VisualizationMode = 'bars' | 'curve' | 'oscilloscope' | 'waterfall' 
 
 export type AudioSourceType = 'sample' | 'file' | 'mic' | 'url';
 
+export type WorkspaceTab = 'live' | 'media' | 'tools' | 'recorder' | 'ai';
+
 export interface DashboardModuleConfig {
   id: string;
   title: string;
@@ -185,6 +187,32 @@ export interface AiNoiseDetectionResult {
     roomTreatment: string; // e.g., 'Place absorber panel at primary reflection points'
     hardwareFix: string; // e.g., 'Use a noise gate or ground loop isolator'
   };
+  timeEvents?: Array<{ time: string; event: string }>;
+}
+
+export interface AcousticDiagnosticReport {
+  overallRating: 'Optimal Studio' | 'Good Acoustic Space' | 'Moderate Noise Leaks' | 'Severe Acoustic Issues';
+  summary: string;
+  roomModesAnalysis: {
+    resonantPeakFrequencies: string[];
+    roomProblemSummary: string;
+    bassTrappingAdvice: string;
+  };
+  noiseFloorAndDynamicRange: {
+    noiseFloorAssessment: string;
+    snrQuality: string;
+    impulsiveSpikesAssessment: string;
+  };
+  correctiveEqBlueprint: {
+    suggestedFilters: Array<{
+      type: 'highpass' | 'notch' | 'bell' | 'lowpass';
+      frequencyHz: number;
+      q: number;
+      gainDb: number;
+      reason: string;
+    }>;
+  };
+  actionableRemediationSteps: string[];
 }
 
 // Frequency Tools Types

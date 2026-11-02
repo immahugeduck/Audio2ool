@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { VisualizerSettings, AiNoiseDetectionResult } from './types';
+import { VisualizerSettings, AiNoiseDetectionResult, WorkspaceTab } from './types';
 import { useAudioEngine } from './hooks/useAudioEngine';
 import { useNoiseBaseline } from './hooks/useNoiseBaseline';
 import { Sidebar } from './components/Sidebar';
@@ -20,7 +20,9 @@ import { EventAnomalyLog } from './components/EventAnomalyLog';
 import { UrlAudioAnalyzer } from './components/UrlAudioAnalyzer';
 import { FrequencyToolsPanel } from './components/FrequencyToolsPanel';
 import { StudioRecorder } from './components/StudioRecorder';
-import { Music, Sliders, Disc, Settings, Mic } from 'lucide-react';
+import { AiNoiseDetector } from './components/AiNoiseDetector';
+import { TranscriptionPanel } from './components/TranscriptionPanel';
+import { Music, Sliders, Disc, Settings, Mic, Sparkles, FileText } from 'lucide-react';
 
 export default function App() {
   const [settings, setSettings] = useState<VisualizerSettings>({
@@ -57,10 +59,10 @@ export default function App() {
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<'color' | 'mic' | 'audio'>('color');
-  const [latestAiResult] = useState<AiNoiseDetectionResult | null>(null);
+  const [latestAiResult, setLatestAiResult] = useState<AiNoiseDetectionResult | null>(null);
 
-  // Workspace View State: 'live' | 'media' | 'tools' | 'recorder'
-  const [activeTab, setActiveTab] = useState<'live' | 'media' | 'tools' | 'recorder'>('live');
+  // Workspace View State: 'live' | 'media' | 'tools' | 'recorder' | 'ai'
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('live');
 
   const updateSettings = useCallback((partial: Partial<VisualizerSettings>) => {
     setSettings((prev) => ({ ...prev, ...partial }));
@@ -99,10 +101,11 @@ export default function App() {
     updateSignalGen,
     isolatorState,
     updateIsolator,
-    // Audio stream getters for Studio Recorder
+    // Audio stream getters for Studio Recorder & AI Suite
     getAudioContext,
     getMasterStream,
     getMicStream,
+    loadedFile,
   } = useAudioEngine(settings);
 
   // Long-term noise baseline profiling & calibration
@@ -382,6 +385,50 @@ export default function App() {
                     enableMicrophone={enableMicrophone}
                     loadAudioFile={loadAudioFile}
                   />
+                </div>
+              )}
+
+              {/* VIEW 5: AI ACOUSTIC LAB & RECOGNITION */}
+              {activeTab === 'ai' && (
+                <div className="flex flex-col gap-5">
+                  <div className="flex items-center justify-between px-1 flex-wrap gap-2">
+                    <div className="flex items-center gap-2 text-sm font-bold text-purple-300">
+                      <Sparkles className="w-4 h-4 text-purple-400" />
+                      <span>Gemini AI Acoustic Suite &amp; Intelligent Audio Diagnostics</span>
+                    </div>
+                    <button
+                      onClick={() => setIsReportOpen(true)}
+                      id="btn-open-audit-from-ai"
+                      className="px-3.5 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-purple-300" />
+                      <span>Full AI Acoustic Consultation Report</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+                    <div className="xl:col-span-6 flex flex-col gap-5">
+                      <AiNoiseDetector
+                        engineState={engineState}
+                        metrics={metrics}
+                        profile={profile}
+                        enableMicrophone={enableMicrophone}
+                        getMicStream={getMicStream}
+                        getMasterStream={getMasterStream}
+                        onDetectResult={setLatestAiResult}
+                      />
+                    </div>
+
+                    <div className="xl:col-span-6 flex flex-col gap-5">
+                      <TranscriptionPanel
+                        engineState={engineState}
+                        loadedFile={loadedFile}
+                        getMicStream={getMicStream}
+                        getMasterStream={getMasterStream}
+                        enableMicrophone={enableMicrophone}
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
             </main>

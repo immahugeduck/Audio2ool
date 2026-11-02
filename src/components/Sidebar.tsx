@@ -14,6 +14,7 @@ import {
   Bluetooth,
   Palette,
   AlertCircle,
+  Sparkles,
 } from 'lucide-react';
 import {
   AudioEngineState,
@@ -21,6 +22,7 @@ import {
   FrequencyWeighting,
   NoiseBaselineProfile,
   VisualizerSettings,
+  WorkspaceTab,
 } from '../types';
 import { getPresetById } from '../utils/colorGradients';
 
@@ -30,8 +32,8 @@ interface SidebarProps {
   settings: VisualizerSettings;
   weighting: FrequencyWeighting;
   setWeighting: (w: FrequencyWeighting) => void;
-  activeTab: 'live' | 'media' | 'tools' | 'recorder';
-  onSelectTab: (tab: 'live' | 'media' | 'tools' | 'recorder') => void;
+  activeTab: WorkspaceTab;
+  onSelectTab: (tab: WorkspaceTab) => void;
   enableMicrophone: (deviceId?: string) => Promise<void>;
   toggleMicMonitoring: () => void;
   loadSampleTrack?: (trackId: string) => Promise<void>;
@@ -160,6 +162,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <Disc className="w-4 h-4 shrink-0 text-rose-400" />
             <span className="truncate">Studio WAV Recorder</span>
+          </button>
+
+          <button
+            onClick={() => onSelectTab('ai')}
+            id="sidebar-tab-ai"
+            className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between transition-colors cursor-pointer whitespace-nowrap ${
+              activeTab === 'ai'
+                ? 'bg-purple-500/20 text-purple-200 border border-purple-500/50 shadow-sm shadow-purple-500/10'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+            }`}
+          >
+            <div className="flex items-center gap-2.5 truncate">
+              <Sparkles className="w-4 h-4 shrink-0 text-purple-400" />
+              <span className="truncate">AI Acoustic Lab</span>
+            </div>
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+              Gemini
+            </span>
           </button>
         </div>
       </div>

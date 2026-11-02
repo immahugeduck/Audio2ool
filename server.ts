@@ -52,23 +52,33 @@ async function startServer() {
       const ai = getGeminiAi();
 
       const metricsContext = spectralMetrics
-        ? `\nSpectral Metrics Context: Peak frequency: ${spectralMetrics.peakHz || 'N/A'} Hz, RMS Volume: ${spectralMetrics.rmsDb || 'N/A'} dB, Bass ratio: ${spectralMetrics.bass || 'N/A'}, Treble ratio: ${spectralMetrics.treble || 'N/A'}.`
+        ? `\nMeasured Acoustic Telemetry:
+- Peak Prominent Frequency: ${spectralMetrics.peakHz || 'N/A'} Hz (${spectralMetrics.peakNote || 'N/A'})
+- Peak Prominence Level: ${spectralMetrics.prominenceDb || 'N/A'} dBFS
+- RMS Sound Pressure Level: ${spectralMetrics.rmsDb || 'N/A'} dBFS (Weighting: ${spectralMetrics.weighting || 'Z'})
+- Dynamic Crest Factor (Peak-to-Average): +${spectralMetrics.crestFactorDb || 'N/A'} dB
+- Spectral Centroid: ${spectralMetrics.spectralCentroidHz || 'N/A'} Hz
+- Harmonic Distortion (THD): ${spectralMetrics.thdPercent !== undefined ? `${spectralMetrics.thdPercent}%` : 'N/A'}
+- Energy Distribution: Sub-Bass: ${spectralMetrics.subBass || 0}%, Bass: ${spectralMetrics.bass || 0}%, Midrange: ${spectralMetrics.mid || 0}%, Treble: ${spectralMetrics.treble || 0}%
+- Room Noise Floor: ${spectralMetrics.noiseFloorDb || 'N/A'} dBFS (SNR: +${spectralMetrics.snrDb || 'N/A'} dB)
+- Impulsive Transient Rate: ${spectralMetrics.transientCount || 0} spikes`
         : '';
 
       const promptText = `
-Analyze this short live microphone audio clip captured from an audio spectrum analyzer app.${metricsContext}
-Identify and guess the noises or sound events occurring in the audio clip.
-Consider possibilities such as:
-- Human Sounds: Speech/Talking, Whistling, Clapping, Snapping Fingers, Coughing, Laughter, Humming, Breathing
-- Environmental/Mechanical: Keyboard Typing, Mouse Clicks, Chair Creak, Fan/HVAC Noise, Room Reverb, Object Tapping, Rustling Paper
-- Musical / Tonal: Singing, Whistling, Instrument Sounds, Synth / Pure Tones
-- Silence / Ambient: Quiet Background, Soft Static, Low White Noise
+You are analyzing a live audio capture from a precision acoustic spectrum analyzer.
+${metricsContext}
 
-Return a JSON object with your classification and assessment.
+Perform acoustic signature classification of the audio event(s) in this clip:
+1. Identify the primary sound event (e.g. Clapping, Mechanical Keyboard Typing, Whistling, Vocal Speech, Fan/HVAC Airflow, Guitar/Instrument Chords, Object Tap, Static Background, Pure Sine Tone).
+2. Quantify confidence percentage (0-100%).
+3. Classify into category (Human, Percussive, Mechanical, Musical, Ambient, Transient, Electronic, Silence).
+4. Provide a professional acoustic description including harmonic structure, transient sharpness, and timbre.
+5. Provide psychoacoustic ratings (sharpness, brightness, warmth, harshness, perceived LUFS, sound purity).
+6. Give actionable audio engineering remediation (corrective EQ filter, room treatment advice, gate/hardware setting).
       `.trim();
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.8-flash',
         contents: [
           {
             inlineData: {
@@ -81,13 +91,14 @@ Return a JSON object with your classification and assessment.
           },
         ],
         config: {
+          systemInstruction: 'You are a Senior Audio Engineer and Psychoacoustics Specialist. Deliver precise acoustic classification grounded in audio physics and spectral analysis.',
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
             properties: {
               primarySound: {
                 type: Type.STRING,
-                description: 'The primary identified sound or noise (e.g. Clapping, Typing, Whistling, Speech, Fan Noise, Silence)',
+                description: 'The primary identified sound or noise event (e.g. Clapping, Typing, Whistling, Vocal Speech, Fan Noise, Silence, Piano Chords)',
               },
               confidence: {
                 type: Type.INTEGER,
@@ -95,11 +106,11 @@ Return a JSON object with your classification and assessment.
               },
               category: {
                 type: Type.STRING,
-                description: 'Category: Human, Percussive, Mechanical, Musical, Ambient, Silence',
+                description: 'Category: Human, Percussive, Mechanical, Musical, Ambient, Transient, Electronic, Silence',
               },
               description: {
                 type: Type.STRING,
-                description: 'A concise 1-sentence acoustic description of what was detected',
+                description: 'A concise 1-2 sentence acoustic engineering description of what was detected',
               },
               top2OtherNoises: {
                 type: Type.ARRAY,
@@ -108,7 +119,7 @@ Return a JSON object with your classification and assessment.
               },
               acousticCharacteristics: {
                 type: Type.STRING,
-                description: 'Notable acoustic traits observed (e.g. Sharp transients, steady low hum, harmonic overtones)',
+                description: 'Notable acoustic traits observed (e.g. Sharp transients, steady 60Hz hum, overtone series)',
               },
               psychoacoustics: {
                 type: Type.OBJECT,
@@ -127,7 +138,7 @@ Return a JSON object with your classification and assessment.
                 properties: {
                   eqAction: { type: Type.STRING, description: 'Actionable EQ recommendation to isolate or clean sound' },
                   roomTreatment: { type: Type.STRING, description: 'Acoustic room treatment or mic positioning advice' },
-                  hardwareFix: { type: Type.STRING, description: 'Hardware or filter recommendation (e.g., High-pass, Noise Gate, Ground Isolator)' },
+                  hardwareFix: { type: Type.STRING, description: 'Hardware or filter recommendation (e.g., High-pass at 80Hz, Noise Gate, Ground Isolator)' },
                 },
                 required: ['eqAction', 'roomTreatment', 'hardwareFix'],
               },
@@ -150,13 +161,16 @@ Return a JSON object with your classification and assessment.
       });
     } catch (err: any) {
       console.error('Error classifying live audio:', err);
+      const isAuthError = err.message?.includes('API_KEY') || err.message?.includes('403') || err.message?.includes('401');
       res.status(500).json({
-        error: err.message || 'Failed to analyze live microphone noise',
+        error: isAuthError
+          ? 'Gemini API authentication issue. Please check the GEMINI_API_KEY in the Secrets panel.'
+          : (err.message || 'Failed to analyze live audio'),
       });
     }
   });
 
-  // API Route: Transcribe Audio
+  // API Route: Transcribe Audio using official gemini-3.5-transcribe model
   app.post('/api/transcribe-audio', async (req, res) => {
     try {
       const { audioBase64, mimeType = 'audio/webm' } = req.body;
@@ -170,7 +184,7 @@ Return a JSON object with your classification and assessment.
       const ai = getGeminiAi();
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.5-transcribe',
         contents: [
           {
             inlineData: {
@@ -179,21 +193,147 @@ Return a JSON object with your classification and assessment.
             },
           },
           {
-            text: 'Please transcribe the following audio clip carefully. Return only the transcription.',
+            text: 'Transcribe this audio recording accurately. Include speaker markers and timestamp markers (e.g. [00:01]) when speech is detected. If non-verbal acoustic sounds occur (e.g. [Clapping], [Keyboard Typing], [Laughter], [Humming], [Instrumental Synth]), note them in brackets. Provide clean formatting.',
           },
         ],
       });
 
       const transcription = response.text;
-      
+
       res.json({
         success: true,
-        transcription: transcription?.trim(),
+        transcription: transcription?.trim() || '(No speech detected in audio clip)',
       });
     } catch (err: any) {
       console.error('Error transcribing audio:', err);
+      const isAuthError = err.message?.includes('API_KEY') || err.message?.includes('403') || err.message?.includes('401');
       res.status(500).json({
-        error: err.message || 'Failed to transcribe audio',
+        error: isAuthError
+          ? 'Gemini API authentication issue. Please check the GEMINI_API_KEY in the Secrets panel.'
+          : (err.message || 'Failed to transcribe audio clip'),
+      });
+    }
+  });
+
+  // API Route: Comprehensive Acoustic Audit & Room Diagnostics Consultation
+  app.post('/api/diagnose-acoustics', async (req, res) => {
+    try {
+      const { reportMarkdown, telemetry } = req.body;
+
+      if (!reportMarkdown && !telemetry) {
+        res.status(400).json({ error: 'Missing reportMarkdown or telemetry payload' });
+        return;
+      }
+
+      const ai = getGeminiAi();
+
+      const promptText = `
+You are evaluating a comprehensive acoustic telemetry snapshot from an audio analyzer suite:
+
+${reportMarkdown || JSON.stringify(telemetry, null, 2)}
+
+Provide a Senior Acoustic Engineering Consultation:
+1. Assess room resonance modes, standing waves, and prominent frequency peaks.
+2. Evaluate background noise floor, dynamic crest factor, and transient impulses.
+3. Determine whether the acoustic environment qualifies as Optimal Studio, Good Acoustic Space, Moderate Noise Leaks, or Severe Acoustic Issues.
+4. Prescribe a concrete Corrective EQ Blueprint with exact suggested filter types, center frequencies (Hz), Q-factors, and gain adjustments (dB).
+5. Provide actionable room acoustic treatment remediation steps (e.g. bass trap placement, absorption at first reflection points, decoupling, noise gate threshold).
+      `.trim();
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: promptText,
+        config: {
+          systemInstruction: 'You are an expert Acoustic Consultant and Sound Systems Engineer. Deliver rigorous, mathematically sound acoustic evaluations and practical audio engineering solutions.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              overallRating: {
+                type: Type.STRING,
+                description: 'One of: Optimal Studio, Good Acoustic Space, Moderate Noise Leaks, Severe Acoustic Issues',
+              },
+              summary: {
+                type: Type.STRING,
+                description: 'Executive acoustic diagnostic summary of the space or audio pipeline',
+              },
+              roomModesAnalysis: {
+                type: Type.OBJECT,
+                properties: {
+                  resonantPeakFrequencies: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                    description: 'Identified resonant peaks or problem frequencies',
+                  },
+                  roomProblemSummary: {
+                    type: Type.STRING,
+                    description: 'Analysis of room reflections, modes, or frequency buildup',
+                  },
+                  bassTrappingAdvice: {
+                    type: Type.STRING,
+                    description: 'Specific low-frequency absorption and corner bass trapping advice',
+                  },
+                },
+                required: ['resonantPeakFrequencies', 'roomProblemSummary', 'bassTrappingAdvice'],
+              },
+              noiseFloorAndDynamicRange: {
+                type: Type.OBJECT,
+                properties: {
+                  noiseFloorAssessment: { type: Type.STRING, description: 'Evaluation of the measured ambient noise floor' },
+                  snrQuality: { type: Type.STRING, description: 'Evaluation of Signal-to-Noise Ratio and dynamic headroom' },
+                  impulsiveSpikesAssessment: { type: Type.STRING, description: 'Evaluation of transient spikes and impulsive noise rate' },
+                },
+                required: ['noiseFloorAssessment', 'snrQuality', 'impulsiveSpikesAssessment'],
+              },
+              correctiveEqBlueprint: {
+                type: Type.OBJECT,
+                properties: {
+                  suggestedFilters: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        type: { type: Type.STRING, description: 'One of: highpass, notch, bell, lowpass' },
+                        frequencyHz: { type: Type.NUMBER, description: 'Center or cutoff frequency in Hz' },
+                        q: { type: Type.NUMBER, description: 'Q factor bandwidth (e.g. 1.4 to 10.0)' },
+                        gainDb: { type: Type.NUMBER, description: 'Gain cut or boost in dB (e.g. -6.0)' },
+                        reason: { type: Type.STRING, description: 'Engineering rationale for this filter' },
+                      },
+                      required: ['type', 'frequencyHz', 'q', 'gainDb', 'reason'],
+                    },
+                  },
+                },
+                required: ['suggestedFilters'],
+              },
+              actionableRemediationSteps: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Top 4-5 prioritized actionable acoustic remediation steps',
+              },
+            },
+            required: ['overallRating', 'summary', 'roomModesAnalysis', 'noiseFloorAndDynamicRange', 'correctiveEqBlueprint', 'actionableRemediationSteps'],
+          },
+        },
+      });
+
+      const responseText = response.text;
+      if (!responseText) {
+        throw new Error('No diagnostic output returned by Gemini model');
+      }
+
+      const parsedData = JSON.parse(responseText);
+      res.json({
+        success: true,
+        report: parsedData,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('Error generating acoustic diagnosis:', err);
+      const isAuthError = err.message?.includes('API_KEY') || err.message?.includes('403') || err.message?.includes('401');
+      res.status(500).json({
+        error: isAuthError
+          ? 'Gemini API authentication issue. Please check the GEMINI_API_KEY in the Secrets panel.'
+          : (err.message || 'Failed to generate acoustic diagnostic consultation'),
       });
     }
   });
