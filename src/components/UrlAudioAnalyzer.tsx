@@ -103,7 +103,7 @@ export const UrlAudioAnalyzer: React.FC<UrlAudioAnalyzerProps> = ({
     try {
       localStorage.setItem('audio_analyzer_url_history_v1', JSON.stringify(history));
     } catch (e) {
-      console.error('Failed to save URL history', e);
+      console.warn('Failed to save URL history to storage', e);
     }
   }, [history]);
 

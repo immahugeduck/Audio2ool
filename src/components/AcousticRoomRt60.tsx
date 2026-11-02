@@ -66,7 +66,7 @@ export const AcousticRoomRt60: React.FC<AcousticRoomRt60Props> = ({
 
       noise.start();
     } catch (e) {
-      console.error('Impulse burst playback failed:', e);
+      console.warn('Impulse burst playback notice:', e);
     }
   };
 

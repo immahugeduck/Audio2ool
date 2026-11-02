@@ -282,7 +282,8 @@ export function useAudioEngine(settings: VisualizerSettings) {
 
       const source = ctx.createBufferSource();
       source.buffer = audioBufferRef.current;
-      source.playbackRate.value = engineState.playbackRate;
+      const playbackRate = engineStateRef.current.playbackRate || 1.0;
+      source.playbackRate.value = playbackRate;
       source.connect(bassFilter);
 
       const duration = audioBufferRef.current.duration;
@@ -290,13 +291,13 @@ export function useAudioEngine(settings: VisualizerSettings) {
 
       source.start(0, startOffset);
       bufferSourceRef.current = source;
-      startTimeRef.current = ctx.currentTime - startOffset / engineState.playbackRate;
+      startTimeRef.current = ctx.currentTime - startOffset / playbackRate;
 
       source.onended = () => {
         // When audio natural ends
         const currentCtx = audioCtxRef.current;
         if (currentCtx && bufferSourceRef.current === source) {
-          const played = (currentCtx.currentTime - startTimeRef.current) * engineState.playbackRate;
+          const played = (currentCtx.currentTime - startTimeRef.current) * (engineStateRef.current.playbackRate || 1.0);
           if (played >= duration - 0.2) {
             setEngineState((prev) => ({
               ...prev,
@@ -316,7 +317,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
         duration,
       }));
     },
-    [initAudioGraph, stopSourceNode, engineState.playbackRate]
+    [initAudioGraph, stopSourceNode]
   );
 
   // Load procedural sample track
@@ -379,7 +380,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
         // Auto play on upload
         setTimeout(() => playBufferFrom(0), 100);
       } catch (err) {
-        console.error('Failed to decode audio file', err);
+        console.warn('Failed to decode audio file', err);
       }
     },
     [initAudioGraph, stopSourceNode, playBufferFrom]
@@ -466,8 +467,8 @@ export function useAudioEngine(settings: VisualizerSettings) {
         }
 
         throw new Error('CORS Policy: Remote server blocked direct audio array buffer extraction.');
-      } catch (err: any) {
-        console.error('Failed to load audio from URL:', err);
+      } catch (err: unknown) {
+        console.warn('Failed to load audio from URL:', err);
         setEngineState((prev) => ({
           ...prev,
           urlLoading: false,
@@ -556,7 +557,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
     stopSourceNode();
     setLoadedFile(null);
 
-    const deviceToUse = targetDeviceId || engineState.selectedDeviceId;
+    const deviceToUse = targetDeviceId || engineStateRef.current.selectedDeviceId;
 
     try {
       let audioConstraints: boolean | MediaTrackConstraints = {
@@ -595,7 +596,9 @@ export function useAudioEngine(settings: VisualizerSettings) {
 
       if (masterGainRef.current) {
         // Mute speaker output if micMonitoring is false to prevent feedback while analyzing
-        masterGainRef.current.gain.value = engineState.micMonitoring ? (engineState.isMuted ? 0 : engineState.volume) : 0;
+        masterGainRef.current.gain.value = engineStateRef.current.micMonitoring 
+          ? (engineStateRef.current.isMuted ? 0 : engineStateRef.current.volume) 
+          : 0;
       }
 
       // Refresh labels after permission grant
@@ -612,15 +615,41 @@ export function useAudioEngine(settings: VisualizerSettings) {
         duration: 0,
         selectedDeviceId: deviceToUse || prev.selectedDeviceId,
       }));
-    } catch (err) {
-      console.error('Microphone access denied or error:', err);
+    } catch (err: unknown) {
+      const errMsg = (err as Error)?.message || String(err);
+      console.warn('Microphone access not granted or permission denied by system:', errMsg);
+      
       setEngineState((prev) => ({
         ...prev,
-        micError: 'Microphone permission denied or unavailable.',
+        micError: 'Microphone permission denied by system. Operating in Calibrated Sample Audio mode. Click "Enable Mic" to retry.',
         micActive: false,
+        sourceType: 'sample',
       }));
+
+      // Automatically fallback to procedural sample track so visualizer stays active
+      try {
+        const track = SAMPLE_TRACKS.find((t) => t.id === 'synthwave') || SAMPLE_TRACKS[0];
+        const buffer = await generateSampleAudioBuffer(ctx, track.generatorType, 30);
+        audioBufferRef.current = buffer;
+        pausedTimeRef.current = 0;
+        setLoadedFile(null);
+        setEngineState((prev) => ({
+          ...prev,
+          sourceType: 'sample',
+          activeSampleId: track.id,
+          fileName: null,
+          duration: buffer.duration,
+          currentTime: 0,
+          isPlaying: true,
+          isPaused: false,
+          micActive: false,
+        }));
+        playBufferFrom(0);
+      } catch (fallbackErr) {
+        console.warn('Fallback audio generation notice:', fallbackErr);
+      }
     }
-  }, [initAudioGraph, stopSourceNode, engineState.selectedDeviceId, engineState.micMonitoring, engineState.isMuted, engineState.volume, refreshAudioDevices]);
+  }, [initAudioGraph, stopSourceNode, refreshAudioDevices, playBufferFrom]);
 
   // Audio Control Methods
   const play = useCallback(() => {

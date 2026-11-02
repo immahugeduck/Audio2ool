@@ -118,18 +118,15 @@ export default function App() {
     engineState.sourceType === 'mic' || engineState.isPlaying
   );
 
-  // Auto-enable live microphone in Live Visualizer mode, or sample track in Media mode
+  // Initial audio setup: start with procedural sample track so the visualizer
+  // has active signal immediately without triggering unprompted browser mic permission denials.
   useEffect(() => {
-    if (activeTab === 'live') {
-      enableMicrophone();
-    } else if (
-      activeTab === 'media' &&
-      engineState.sourceType !== 'file' &&
-      engineState.sourceType !== 'url'
-    ) {
+    if (activeTab === 'media' && engineState.sourceType !== 'file' && engineState.sourceType !== 'url') {
+      loadSampleTrack('synthwave');
+    } else if (activeTab === 'live' && !engineState.micActive && engineState.sourceType !== 'mic' && !engineState.isPlaying) {
       loadSampleTrack('synthwave');
     }
-  }, [activeTab, enableMicrophone, loadSampleTrack, engineState.sourceType]);
+  }, [activeTab]);
 
   return (
     <DropZone onFileDrop={loadAudioFile}>
@@ -145,6 +142,7 @@ export default function App() {
           onSelectTab={setActiveTab}
           enableMicrophone={enableMicrophone}
           toggleMicMonitoring={toggleMicMonitoring}
+          loadSampleTrack={loadSampleTrack}
           profile={profile}
           isCalibrating={isCalibrating}
           startCalibration={startCalibration}
@@ -156,6 +154,30 @@ export default function App() {
         {/* Primary Main Content Area (Isolated from High-Frequency Sidebar Telemetry) */}
         <div className="flex-1 min-w-0 flex flex-col">
           <div className="max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 flex flex-col gap-5 flex-1">
+            {/* Microphone Permission Notice Banner */}
+            {engineState.micError && (
+              <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-2.5 text-xs text-rose-300 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0" />
+                  <span>{engineState.micError}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => enableMicrophone(engineState.selectedDeviceId || undefined)}
+                    className="px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-bold border border-rose-500/40 cursor-pointer transition-colors"
+                  >
+                    Enable Mic
+                  </button>
+                  <button
+                    onClick={() => loadSampleTrack('synthwave')}
+                    className="px-3 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-semibold border border-slate-700 cursor-pointer transition-colors"
+                  >
+                    Demo Audio
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* 1. Primary Spectrum, Oscilloscope, 3D Waterfall & 2D Heatmap Graph */}
             <CanvasVisualizer
               settings={settings}

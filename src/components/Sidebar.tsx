@@ -13,6 +13,7 @@ import {
   VolumeX,
   Bluetooth,
   Palette,
+  AlertCircle,
 } from 'lucide-react';
 import {
   AudioEngineState,
@@ -33,6 +34,7 @@ interface SidebarProps {
   onSelectTab: (tab: 'live' | 'media' | 'tools' | 'recorder') => void;
   enableMicrophone: (deviceId?: string) => Promise<void>;
   toggleMicMonitoring: () => void;
+  loadSampleTrack?: (trackId: string) => Promise<void>;
   profile: NoiseBaselineProfile;
   isCalibrating: boolean;
   startCalibration: () => void;
@@ -51,6 +53,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   enableMicrophone,
   toggleMicMonitoring,
+  loadSampleTrack,
   profile,
   isCalibrating,
   startCalibration,
@@ -240,6 +243,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>{engineState.micMonitoring ? 'Monitor ON' : 'Monitor OFF'}</span>
             </button>
           </div>
+
+          {/* Microphone Permission / Error Alert */}
+          {engineState.micError && (
+            <div className="mt-1 p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px] flex flex-col gap-1.5">
+              <div className="flex items-start gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                <span className="leading-snug">{engineState.micError}</span>
+              </div>
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <button
+                  onClick={() => enableMicrophone(engineState.selectedDeviceId || undefined)}
+                  className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-[10px] font-bold border border-rose-500/40 cursor-pointer transition-colors"
+                >
+                  Retry Mic
+                </button>
+                {loadSampleTrack && (
+                  <button
+                    onClick={() => loadSampleTrack('synthwave')}
+                    className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] font-semibold border border-slate-700 cursor-pointer transition-colors"
+                  >
+                    Demo Audio
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

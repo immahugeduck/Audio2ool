@@ -173,9 +173,9 @@ export const AiNoiseDetector: React.FC<AiNoiseDetectorProps> = ({
       } else {
         throw new Error('Invalid detection payload format from server');
       }
-    } catch (err: any) {
-      console.error('Error guessing mic noise:', err);
-      setErrorMsg(err.message || 'Could not analyze microphone sound');
+    } catch (err: unknown) {
+      console.warn('Microphone sound analysis notice:', err);
+      setErrorMsg((err as Error)?.message || 'Could not analyze microphone sound');
     } finally {
       setIsRecording(false);
       setIsAnalyzing(false);

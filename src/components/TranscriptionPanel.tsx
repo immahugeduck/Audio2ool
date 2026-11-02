@@ -49,8 +49,8 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
       setError(null);
       setTranscription(null);
     } catch (err) {
-      console.error('Failed to start recording', err);
-      setError('Failed to start recording. Your browser may not support this feature.');
+      console.warn('Media recording notice:', err);
+      setError('Recording is unavailable in this environment.');
     }
   };
 
@@ -94,9 +94,9 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
         }
         setIsTranscribing(false);
       };
-    } catch (err: any) {
-      console.error('Transcription error:', err);
-      setError(err.message || 'An error occurred during transcription.');
+    } catch (err: unknown) {
+      console.warn('Transcription notice:', err);
+      setError((err as Error)?.message || 'An error occurred during transcription.');
       setIsTranscribing(false);
     }
   };
