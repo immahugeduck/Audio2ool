@@ -79,7 +79,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
 
   if (!isOpen) return null;
 
-  const fftSizes = [128, 256, 512, 1024, 2048, 4096, 8192];
+  const fftSizes = [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
   const activeColorId = (settings.spectrogramColorMap || settings.colorPresetId) as SpectrogramColorMap;
 
   const handleSelectColorMap = (id: SpectrogramColorMap) => {

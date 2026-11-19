@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { VisualizerSettings, AiNoiseDetectionResult, WorkspaceTab } from './types';
 import { useAudioEngine } from './hooks/useAudioEngine';
 import { useNoiseBaseline } from './hooks/useNoiseBaseline';
@@ -88,6 +88,7 @@ export default function App() {
     loadAudioFile,
     loadAudioFromUrl,
     enableMicrophone,
+    enableTabCapture,
     toggleMicMonitoring,
     getFrequencyData,
     getFloatFrequencyData,
@@ -121,15 +122,8 @@ export default function App() {
     engineState.sourceType === 'mic' || engineState.isPlaying
   );
 
-  // Initial audio setup: start with procedural sample track so the visualizer
-  // has active signal immediately without triggering unprompted browser mic permission denials.
-  useEffect(() => {
-    if (activeTab === 'media' && engineState.sourceType !== 'file' && engineState.sourceType !== 'url') {
-      loadSampleTrack('synthwave');
-    } else if (activeTab === 'live' && !engineState.micActive && engineState.sourceType !== 'mic' && !engineState.isPlaying) {
-      loadSampleTrack('synthwave');
-    }
-  }, [activeTab]);
+  // The engine loads the built-in sample once on start-up. Switching workspace views must
+  // never reload it: that used to stop playback and replace a user's paused file.
 
   return (
     <DropZone onFileDrop={loadAudioFile}>
@@ -337,9 +331,8 @@ export default function App() {
                       <UrlAudioAnalyzer
                         engineState={engineState}
                         loadAudioFromUrl={loadAudioFromUrl}
-                        loadSampleTrack={loadSampleTrack}
                         enableMicrophone={enableMicrophone}
-                        play={play}
+                        enableTabCapture={enableTabCapture}
                         pause={pause}
                       />
                     </div>

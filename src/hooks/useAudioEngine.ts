@@ -6,8 +6,11 @@ import {
   SignalGeneratorState,
   FrequencyIsolatorState,
   SignalGeneratorWaveform,
-  FrequencyWeighting
+  FrequencyWeighting,
+  StereoMetrics,
+  isLiveInputSource,
 } from '../types';
+import { channelCorrelation, analyzeStereoTones } from '../dsp/peaks';
 import { SAMPLE_TRACKS, generateSampleAudioBuffer, calculateAudioMetrics } from '../utils/audioPresets';
 import { generatePinkNoiseBuffer, generateWhiteNoiseBuffer } from '../utils/frequencyTools';
 
@@ -36,6 +39,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
     isBluetoothConnected: false,
     bluetoothDeviceName: null,
     phoneMicDeviceName: null,
+    tabCaptureError: null,
   });
 
   const [loadedFile, setLoadedFile] = useState<File | null>(null);
@@ -106,6 +110,16 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const trebleFilterRef = useRef<BiquadFilterNode | null>(null);
   const isolatorFilterRef = useRef<BiquadFilterNode | null>(null);
   const pannerRef = useRef<StereoPannerNode | null>(null);
+  // Every source (file, sample, URL, mic, tab capture, signal generator) connects here.
+  const inputBusRef = useRef<GainNode | null>(null);
+  // Per-channel measurement analysers, tapped before EQ / isolator / panner.
+  const analyserLRef = useRef<AnalyserNode | null>(null);
+  const analyserRRef = useRef<AnalyserNode | null>(null);
+  const channelFloatFreqLRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const channelFloatFreqRRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const channelFloatTimeLRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const channelFloatTimeRRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const initialSampleLoadedRef = useRef(false);
   const mediaStreamDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
 
   // Signal Generator Node Refs
@@ -120,6 +134,8 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const bufferSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const tabStreamRef = useRef<MediaStream | null>(null);
+  const tabSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   // Playback position state tracking
   const startTimeRef = useRef<number>(0);
@@ -140,29 +156,35 @@ export function useAudioEngine(settings: VisualizerSettings) {
       audioCtxRef.current = ctx;
 
       // Create Analyser Node
+      // Read current values from refs so this callback can stay stable (empty deps).
+      // A changing callback identity used to cascade into loadSampleTrack and reload the
+      // built-in sample over the user's file whenever FFT size, EQ, volume etc. changed.
+      const s0 = settingsRef.current;
+      const e0 = engineStateRef.current;
+
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = settings.fftSize;
-      analyser.smoothingTimeConstant = settings.smoothing;
-      analyser.minDecibels = settings.minDecibels;
-      analyser.maxDecibels = settings.maxDecibels;
+      analyser.fftSize = s0.fftSize;
+      analyser.smoothingTimeConstant = s0.smoothing;
+      analyser.minDecibels = s0.minDecibels;
+      analyser.maxDecibels = s0.maxDecibels;
       analyserRef.current = analyser;
 
       // Equalizer nodes
       const bassFilter = ctx.createBiquadFilter();
       bassFilter.type = 'lowshelf';
       bassFilter.frequency.value = 250;
-      bassFilter.gain.value = engineState.bassGain;
+      bassFilter.gain.value = e0.bassGain;
 
       const midFilter = ctx.createBiquadFilter();
       midFilter.type = 'peaking';
       midFilter.frequency.value = 1000;
       midFilter.Q.value = 1.0;
-      midFilter.gain.value = engineState.midGain;
+      midFilter.gain.value = e0.midGain;
 
       const trebleFilter = ctx.createBiquadFilter();
       trebleFilter.type = 'highshelf';
       trebleFilter.frequency.value = 4000;
-      trebleFilter.gain.value = engineState.trebleGain;
+      trebleFilter.gain.value = e0.trebleGain;
 
       // Frequency Isolator filter
       const isolatorFilter = ctx.createBiquadFilter();
@@ -177,16 +199,57 @@ export function useAudioEngine(settings: VisualizerSettings) {
       signalGenGain.gain.value = signalGenStateRef.current.isActive && !signalGenStateRef.current.isMuted
         ? signalGenStateRef.current.volume
         : 0;
-      signalGenGain.connect(bassFilter);
       signalGenGainRef.current = signalGenGain;
+
+      // Input bus: all sources feed this node. It drives the processing chain and,
+      // in parallel, a stereo measurement tap that ignores EQ/isolator/pan.
+      const inputBus = ctx.createGain();
+      inputBus.connect(bassFilter);
+      signalGenGain.connect(inputBus);
+      inputBusRef.current = inputBus;
+
+      // Force exactly 2 channels with 'speakers' up-mix so mono sources land in both L and R.
+      const measureBus = ctx.createGain();
+      measureBus.channelCount = 2;
+      measureBus.channelCountMode = 'explicit';
+      measureBus.channelInterpretation = 'speakers';
+      inputBus.connect(measureBus);
+      const splitter = ctx.createChannelSplitter(2);
+      measureBus.connect(splitter);
+      const makeChannelAnalyser = () => {
+        const a = ctx.createAnalyser();
+        a.channelCount = 1;
+        a.channelCountMode = 'explicit';
+        a.fftSize = s0.fftSize;
+        a.smoothingTimeConstant = s0.smoothing;
+        a.minDecibels = s0.minDecibels;
+        a.maxDecibels = s0.maxDecibels;
+        return a;
+      };
+      const analyserL = makeChannelAnalyser();
+      const analyserR = makeChannelAnalyser();
+      splitter.connect(analyserL, 0);
+      splitter.connect(analyserR, 1);
+      // Keep the measurement branch pulled by the graph (some engines skip unconnected analysers).
+      const measureSink = ctx.createGain();
+      measureSink.gain.value = 0;
+      analyserL.connect(measureSink);
+      analyserR.connect(measureSink);
+      measureSink.connect(ctx.destination);
+      analyserLRef.current = analyserL;
+      analyserRRef.current = analyserR;
+      channelFloatFreqLRef.current = new Float32Array(analyserL.frequencyBinCount);
+      channelFloatFreqRRef.current = new Float32Array(analyserR.frequencyBinCount);
+      channelFloatTimeLRef.current = new Float32Array(analyserL.fftSize);
+      channelFloatTimeRRef.current = new Float32Array(analyserR.fftSize);
 
       // Panner Node
       const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-      if (panner) panner.pan.value = engineState.pan;
+      if (panner) panner.pan.value = e0.pan;
 
       // Master Gain
       const masterGain = ctx.createGain();
-      masterGain.gain.value = engineState.isMuted ? 0 : engineState.volume;
+      masterGain.gain.value = e0.isMuted ? 0 : e0.volume;
 
       const mediaStreamDestination = ctx.createMediaStreamDestination();
       masterGain.connect(mediaStreamDestination);
@@ -225,7 +288,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
     if (audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume();
     }
-  }, [settings.fftSize, settings.smoothing, settings.minDecibels, settings.maxDecibels, engineState.bassGain, engineState.midGain, engineState.trebleGain, engineState.pan, engineState.isMuted, engineState.volume]);
+  }, []);
 
   // Sync Analyser Settings
   useEffect(() => {
@@ -240,6 +303,21 @@ export function useAudioEngine(settings: VisualizerSettings) {
       timeDataRef.current = new Uint8Array(bufferLength);
       floatTimeDataRef.current = new Float32Array(analyserRef.current.fftSize);
       floatFrequencyDataRef.current = new Float32Array(bufferLength);
+    }
+    for (const a of [analyserLRef.current, analyserRRef.current]) {
+      if (!a) continue;
+      a.fftSize = settings.fftSize;
+      a.smoothingTimeConstant = settings.smoothing;
+      a.minDecibels = settings.minDecibels;
+      a.maxDecibels = settings.maxDecibels;
+    }
+    if (analyserLRef.current) {
+      channelFloatFreqLRef.current = new Float32Array(analyserLRef.current.frequencyBinCount);
+      channelFloatTimeLRef.current = new Float32Array(analyserLRef.current.fftSize);
+    }
+    if (analyserRRef.current) {
+      channelFloatFreqRRef.current = new Float32Array(analyserRRef.current.frequencyBinCount);
+      channelFloatTimeRRef.current = new Float32Array(analyserRRef.current.fftSize);
     }
   }, [settings.fftSize, settings.smoothing, settings.minDecibels, settings.maxDecibels]);
 
@@ -268,6 +346,21 @@ export function useAudioEngine(settings: VisualizerSettings) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
     }
+
+    if (tabSourceRef.current) {
+      try {
+        tabSourceRef.current.disconnect();
+      } catch {
+        // already disconnected
+      }
+      tabSourceRef.current = null;
+    }
+
+    if (tabStreamRef.current) {
+      const stream = tabStreamRef.current;
+      tabStreamRef.current = null;
+      stream.getTracks().forEach((track) => track.stop());
+    }
   }, []);
 
   // Internal function to play buffer from position
@@ -275,8 +368,8 @@ export function useAudioEngine(settings: VisualizerSettings) {
     (offsetSec: number) => {
       initAudioGraph();
       const ctx = audioCtxRef.current;
-      const bassFilter = bassFilterRef.current;
-      if (!ctx || !bassFilter || !audioBufferRef.current) return;
+      const inputBus = inputBusRef.current;
+      if (!ctx || !inputBus || !audioBufferRef.current) return;
 
       stopSourceNode();
 
@@ -284,10 +377,16 @@ export function useAudioEngine(settings: VisualizerSettings) {
       source.buffer = audioBufferRef.current;
       const playbackRate = engineStateRef.current.playbackRate || 1.0;
       source.playbackRate.value = playbackRate;
-      source.connect(bassFilter);
+      source.connect(inputBus);
 
       const duration = audioBufferRef.current.duration;
       const startOffset = Math.max(0, Math.min(offsetSec, duration));
+
+      // Buffer playback is always monitored (a previous mic/tab session may have muted the output).
+      if (masterGainRef.current) {
+        const st = engineStateRef.current;
+        masterGainRef.current.gain.value = st.isMuted ? 0 : st.volume;
+      }
 
       source.start(0, startOffset);
       bufferSourceRef.current = source;
@@ -472,7 +571,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
         setEngineState((prev) => ({
           ...prev,
           urlLoading: false,
-          urlError: 'CORS Restriction: The target URL server blocks direct cross-origin browser audio fetching. Try using YouTube links or one of our verified stream presets.',
+          urlError: 'CORS Restriction: The target URL server blocks direct cross-origin browser audio fetching. Download the audio and load it as a file, or play it in a browser tab and use tab audio capture.',
         }));
       }
     },
@@ -551,8 +650,8 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const enableMicrophone = useCallback(async (targetDeviceId?: string) => {
     initAudioGraph();
     const ctx = audioCtxRef.current;
-    const bassFilter = bassFilterRef.current;
-    if (!ctx || !bassFilter) return;
+    const inputBus = inputBusRef.current;
+    if (!ctx || !inputBus) return;
 
     stopSourceNode();
     setLoadedFile(null);
@@ -591,7 +690,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
 
       mediaStreamRef.current = stream;
       const micSource = ctx.createMediaStreamSource(stream);
-      micSource.connect(bassFilter);
+      micSource.connect(inputBus);
       micSourceRef.current = micSource;
 
       if (masterGainRef.current) {
@@ -651,10 +750,101 @@ export function useAudioEngine(settings: VisualizerSettings) {
     }
   }, [initAudioGraph, stopSourceNode, refreshAudioDevices, playBufferFrom]);
 
+  /**
+   * Capture another browser tab's audio (e.g. a YouTube tab) with getDisplayMedia.
+   * Cross-origin iframes cannot feed Web Audio directly, so this is the honest way to
+   * measure a YouTube video: the user picks the tab and ticks "Share tab audio".
+   */
+  const enableTabCapture = useCallback(async () => {
+    initAudioGraph();
+    const ctx = audioCtxRef.current;
+    const inputBus = inputBusRef.current;
+    if (!ctx || !inputBus) return;
+
+    const md = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+    if (!md || typeof md.getDisplayMedia !== 'function') {
+      setEngineState((prev) => ({
+        ...prev,
+        tabCaptureError: 'Tab audio capture is not supported in this browser. Use desktop Chrome or Edge, or download the audio and load it as a file.',
+      }));
+      return;
+    }
+
+    let stream: MediaStream;
+    try {
+      // Chrome requires video to be requested; we stop the video track immediately.
+      stream = await md.getDisplayMedia({
+        video: true,
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        // Hints for Chromium: prefer offering the current browser's tabs and default "Share tab audio" on.
+        preferCurrentTab: false,
+        selfBrowserSurface: 'exclude',
+        systemAudio: 'include',
+      } as DisplayMediaStreamOptions);
+    } catch (err) {
+      const name = (err as DOMException)?.name;
+      setEngineState((prev) => ({
+        ...prev,
+        tabCaptureError: name === 'NotAllowedError'
+          ? 'Tab capture was cancelled or blocked. Nothing is being measured.'
+          : `Tab capture failed: ${(err as Error)?.message || String(err)}`,
+      }));
+      return;
+    }
+
+    stream.getVideoTracks().forEach((t) => t.stop());
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length === 0) {
+      stream.getTracks().forEach((t) => t.stop());
+      setEngineState((prev) => ({
+        ...prev,
+        tabCaptureError: 'No audio was shared. Pick a browser tab and turn on "Share tab audio", then try again.',
+      }));
+      return;
+    }
+
+    stopSourceNode();
+    setLoadedFile(null);
+    audioBufferRef.current = null;
+    pausedTimeRef.current = 0;
+
+    tabStreamRef.current = stream;
+    const src = ctx.createMediaStreamSource(new MediaStream(audioTracks));
+    src.connect(inputBus);
+    tabSourceRef.current = src;
+
+    // The captured tab is already audible on its own; never replay it (avoids doubling/echo).
+    if (masterGainRef.current) masterGainRef.current.gain.value = 0;
+
+    audioTracks[0].addEventListener('ended', () => {
+      if (tabStreamRef.current !== stream) return;
+      stopSourceNode();
+      setEngineState((prev) => ({ ...prev, isPlaying: false, isPaused: true }));
+    });
+
+    const label = audioTracks[0].label || 'Browser tab';
+    setEngineState((prev) => ({
+      ...prev,
+      sourceType: 'tab',
+      fileName: label,
+      isPlaying: true,
+      isPaused: false,
+      micActive: false,
+      currentTime: 0,
+      duration: 0,
+      tabCaptureError: null,
+    }));
+  }, [initAudioGraph, stopSourceNode]);
+
   // Audio Control Methods
   const play = useCallback(() => {
     if (engineState.sourceType === 'mic') {
       enableMicrophone();
+      return;
+    }
+
+    if (engineState.sourceType === 'tab') {
+      enableTabCapture();
       return;
     }
 
@@ -666,10 +856,10 @@ export function useAudioEngine(settings: VisualizerSettings) {
     }
 
     playBufferFrom(pausedTimeRef.current);
-  }, [engineState.sourceType, engineState.activeSampleId, enableMicrophone, loadSampleTrack, playBufferFrom]);
+  }, [engineState.sourceType, engineState.activeSampleId, enableMicrophone, enableTabCapture, loadSampleTrack, playBufferFrom]);
 
   const pause = useCallback(() => {
-    if (engineState.sourceType === 'mic') {
+    if (isLiveInputSource(engineState.sourceType)) {
       stopSourceNode();
       setEngineState((prev) => ({ ...prev, isPlaying: false, isPaused: true }));
       return;
@@ -690,7 +880,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
 
   const seek = useCallback(
     (timeSeconds: number) => {
-      if (engineState.sourceType === 'mic') return;
+      if (isLiveInputSource(engineState.sourceType)) return;
 
       const clampedTime = Math.max(0, Math.min(timeSeconds, engineState.duration));
       pausedTimeRef.current = clampedTime;
@@ -707,7 +897,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const setVolume = useCallback((volume: number) => {
     setEngineState((prev) => {
       if (masterGainRef.current) {
-        if (prev.sourceType === 'mic' && !prev.micMonitoring) {
+        if ((prev.sourceType === 'mic' && !prev.micMonitoring) || prev.sourceType === 'tab') {
           masterGainRef.current.gain.value = 0;
         } else {
           masterGainRef.current.gain.value = prev.isMuted ? 0 : volume;
@@ -721,7 +911,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
     setEngineState((prev) => {
       const nextMute = !prev.isMuted;
       if (masterGainRef.current) {
-        if (prev.sourceType === 'mic' && !prev.micMonitoring) {
+        if ((prev.sourceType === 'mic' && !prev.micMonitoring) || prev.sourceType === 'tab') {
           masterGainRef.current.gain.value = 0;
         } else {
           masterGainRef.current.gain.value = nextMute ? 0 : prev.volume;
@@ -968,7 +1158,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
         const currentSettings = settingsRef.current;
 
         // Update current time playhead
-        if (currentEngine.isPlaying && currentEngine.sourceType !== 'mic' && audioCtxRef.current) {
+        if (currentEngine.isPlaying && !isLiveInputSource(currentEngine.sourceType) && audioCtxRef.current) {
           const elapsed = (audioCtxRef.current.currentTime - startTimeRef.current) * currentEngine.playbackRate;
           if (elapsed <= currentEngine.duration) {
             setTimeout(() => {
@@ -1000,9 +1190,42 @@ export function useAudioEngine(settings: VisualizerSettings) {
             targetToneHz
           );
 
+          // Per-channel (pre-EQ) stereo / binaural readout
+          let stereo: StereoMetrics | undefined;
+          const aL = analyserLRef.current;
+          const aR = analyserRRef.current;
+          if (aL && aR && channelFloatFreqLRef.current && channelFloatFreqRRef.current
+            && channelFloatTimeLRef.current && channelFloatTimeRRef.current) {
+            aL.getFloatFrequencyData(channelFloatFreqLRef.current);
+            aR.getFloatFrequencyData(channelFloatFreqRRef.current);
+            aL.getFloatTimeDomainData(channelFloatTimeLRef.current);
+            aR.getFloatTimeDomainData(channelFloatTimeRRef.current);
+            const corr = channelCorrelation(channelFloatTimeLRef.current, channelFloatTimeRRef.current);
+            const readout = analyzeStereoTones(
+              channelFloatFreqLRef.current,
+              channelFloatFreqRRef.current,
+              sampleRate,
+              aL.fftSize,
+              corr,
+              { minHz: 20, maxHz: Math.min(20000, sampleRate / 2), minDb: currentSettings.minDecibels }
+            );
+            stereo = {
+              peakHzL: readout.leftHz,
+              peakHzR: readout.rightHz,
+              peakDbL: readout.leftDb,
+              peakDbR: readout.rightDb,
+              beatHz: readout.differenceHz,
+              isBinaural: readout.isBinaural,
+              isCarrierPair: readout.mode === 'binaural-pair',
+              correlation: readout.correlation,
+              resolutionHz: sampleRate / aL.fftSize,
+            };
+          }
+
           setTimeout(() => {
             setMetrics((prev) => ({
               ...prev,
+              stereo,
               peakFrequencyHz: calculated.peakFrequencyHz,
               peakFrequencyFormatted: calculated.peakFrequencyFormatted,
               peakNoteName: calculated.peakNoteName,
@@ -1036,9 +1259,13 @@ export function useAudioEngine(settings: VisualizerSettings) {
     };
   }, []);
 
-  // Initial auto load default sample
+  // Initial auto load default sample: exactly once, never over a user's file.
   useEffect(() => {
-    loadSampleTrack('synthwave');
+    if (initialSampleLoadedRef.current) return;
+    initialSampleLoadedRef.current = true;
+    if (!audioBufferRef.current && engineStateRef.current.sourceType === 'sample') {
+      loadSampleTrack('synthwave');
+    }
   }, [loadSampleTrack]);
 
   // Helper getters for canvas
@@ -1073,6 +1300,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
     loadAudioFile,
     loadAudioFromUrl,
     enableMicrophone,
+    enableTabCapture,
     toggleMicMonitoring,
     getFrequencyData,
     getFloatFrequencyData: useCallback(() => {

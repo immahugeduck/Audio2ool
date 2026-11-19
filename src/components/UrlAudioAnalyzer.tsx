@@ -13,18 +13,24 @@ import {
   Music, 
   AlertCircle, 
   Zap, 
-  Loader2
+  Loader2,
+  MonitorSpeaker,
+  Square
 } from 'lucide-react';
 import { AudioEngineState } from '../types';
 
 interface UrlAudioAnalyzerProps {
   engineState: AudioEngineState;
   loadAudioFromUrl: (url: string, title?: string) => Promise<void>;
-  loadSampleTrack: (trackId: string) => void;
   enableMicrophone: () => void;
-  play: () => void;
+  enableTabCapture: () => Promise<void>;
   pause: () => void;
 }
+
+const tabCaptureSupported = (): boolean =>
+  typeof navigator !== 'undefined' &&
+  !!navigator.mediaDevices &&
+  typeof navigator.mediaDevices.getDisplayMedia === 'function';
 
 interface SavedUrlItem {
   id: string;
@@ -69,11 +75,12 @@ const PRESET_URLS: SavedUrlItem[] = [
 export const UrlAudioAnalyzer: React.FC<UrlAudioAnalyzerProps> = ({
   engineState,
   loadAudioFromUrl,
-  loadSampleTrack,
   enableMicrophone,
-  play,
+  enableTabCapture,
   pause,
 }) => {
+  const canCaptureTab = tabCaptureSupported();
+  const isTabMeasuring = engineState.sourceType === 'tab' && engineState.isPlaying;
   const [inputUrl, setInputUrl] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [history, setHistory] = useState<SavedUrlItem[]>(() => {
@@ -88,7 +95,6 @@ export const UrlAudioAnalyzer: React.FC<UrlAudioAnalyzerProps> = ({
 
   const [activeYoutubeId, setActiveYoutubeId] = useState<string | null>(null);
   const [activeYoutubeTitle, setActiveYoutubeTitle] = useState<string>('');
-  const [isSyncingEngine, setIsSyncingEngine] = useState<boolean>(false);
 
   // Helper to extract YouTube video ID
   const extractYoutubeId = (url: string): string | null => {
@@ -131,11 +137,8 @@ export const UrlAudioAnalyzer: React.FC<UrlAudioAnalyzerProps> = ({
         setHistory(prev => [newItem, ...prev.slice(0, 19)]);
       }
 
-      // Automatically trigger synthesizer / track generator so FFT metrics & 3D visualizers beat in real-time
-      setIsSyncingEngine(true);
-      await loadSampleTrack(engineState.activeSampleId || 'synthwave');
-      play();
-      setTimeout(() => setIsSyncingEngine(false), 800);
+      // The embedded player is cross-origin: its audio cannot be routed into Web Audio.
+      // Do NOT substitute the built-in sample. The user can measure it with tab capture.
     } else {
       // Direct Web Audio Stream / MP3 URL Handling
       setActiveYoutubeId(null);
@@ -184,14 +187,14 @@ export const UrlAudioAnalyzer: React.FC<UrlAudioAnalyzerProps> = ({
               </span>
             </h3>
             <p className="text-xs text-slate-400">
-              Input YouTube videos, podcasts, MP3 links, or web radio streams to analyze frequencies live.
+              Direct audio links (.mp3, .wav, .ogg) are decoded and measured. YouTube plays as an embed; measure it with tab audio capture.
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-slate-500 font-mono">
-            CORS & HTML5 Audio Stream Ready
+            Embeds are playback only
           </span>
         </div>
       </div>
@@ -244,7 +247,7 @@ export const UrlAudioAnalyzer: React.FC<UrlAudioAnalyzerProps> = ({
           <div className="flex-1">
             <strong className="font-bold">Audio Fetch Warning:</strong> {engineState.urlError}
             <div className="mt-1 text-[11px] text-slate-400">
-              Tip: For restricted CORS links, try using YouTube links or built-in stream presets below.
+              Tip: download the audio and load it as a file, or play it in another tab and use tab audio capture.
             </div>
           </div>
         </div>
@@ -275,45 +278,79 @@ export const UrlAudioAnalyzer: React.FC<UrlAudioAnalyzerProps> = ({
               <iframe
                 src={`https://www.youtube.com/embed/${activeYoutubeId}?autoplay=1&rel=0`}
                 title="YouTube Video Player"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 referrerPolicy="strict-origin-when-cross-origin"
                 allowFullScreen
                 className="w-full h-full border-0"
               />
             </div>
 
-            {/* YouTube Audio Telemetry & FFT Bridge Info */}
+            {/* YouTube measurement status: always tells the truth about what is measured */}
             <div className="bg-slate-900 p-3.5 rounded-xl border border-slate-800 flex flex-col justify-between h-full text-xs gap-3">
               <div className="flex flex-col gap-2">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                   <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                  Real-Time FFT Analyzer Sync
+                  Analyzer Status
                 </span>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  The YouTube player is playing video & audio natively above. To analyze raw FFT audio frequencies simultaneously:
-                </p>
-                <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] text-emerald-300 font-mono flex items-center gap-2">
-                  <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
-                  <span>Real-Time Spectrum Analyzer: <strong>ACTIVE</strong></span>
-                </div>
+                {isTabMeasuring ? (
+                  <div id="yt-measure-status" data-status="tab-capture" className="bg-slate-950 p-2.5 rounded-lg border border-emerald-500/40 text-[11px] text-emerald-300 font-mono flex items-start gap-2">
+                    <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0 mt-0.5" />
+                    <span>
+                      Measuring: <strong>tab audio capture</strong>. Levels are playback levels (browser volume and
+                      YouTube loudness normalization apply), not the original file's levels.
+                    </span>
+                  </div>
+                ) : (
+                  <div id="yt-measure-status" data-status="not-measured" className="bg-slate-950 p-2.5 rounded-lg border border-amber-500/40 text-[11px] text-amber-200 flex items-start gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Not measured.</strong> The embedded YouTube player is playback only: browsers do not let a
+                      page route an embedded video's audio into the analyzer. Use <em>Capture tab audio</em> below to
+                      measure it.
+                    </span>
+                  </div>
+                )}
+                {engineState.tabCaptureError && (
+                  <div id="yt-capture-error" className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px]">
+                    {engineState.tabCaptureError}
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col gap-2 pt-2 border-t border-slate-800">
+                {isTabMeasuring ? (
+                  <button
+                    onClick={pause}
+                    id="btn-yt-stop-capture"
+                    className="px-3 py-2 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-200 text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
+                  >
+                    <Square className="w-3.5 h-3.5" />
+                    Stop tab capture
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { void enableTabCapture(); }}
+                    disabled={!canCaptureTab}
+                    id="btn-yt-capture-tab"
+                    title={canCaptureTab ? 'Pick the tab playing this video and turn on "Share tab audio"' : 'Not supported in this browser'}
+                    className="px-3 py-2 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed border border-emerald-500/40 text-emerald-200 text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
+                  >
+                    <MonitorSpeaker className="w-3.5 h-3.5" />
+                    Capture tab audio
+                  </button>
+                )}
+                <p className="text-[10px] text-slate-500 leading-snug">
+                  {canCaptureTab
+                    ? 'Tip: open the video in its own tab (Open on YouTube), click Capture, choose that tab and tick "Share tab audio". Desktop Chrome/Edge only.'
+                    : 'Tab capture is unavailable in this browser (iPhone/iPad Safari and Firefox cannot share tab audio). Download the audio and load it as a file instead.'}
+                </p>
                 <button
                   onClick={enableMicrophone}
                   id="btn-yt-mic-loopback"
                   className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
                 >
                   <Radio className="w-3.5 h-3.5 text-rose-400" />
-                  Use Mic / System Loopback for Exact FFT
-                </button>
-                <button
-                  onClick={() => handleAnalyzeUrl('https://www.youtube.com/watch?v=jfKfPfyJRdk')}
-                  id="btn-yt-lofi-stream"
-                  className="px-3 py-2 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
-                >
-                  <Music className="w-3.5 h-3.5 text-cyan-400" />
-                  Switch to Lofi Chill Stream
+                  Use Mic / System Loopback instead
                 </button>
               </div>
             </div>

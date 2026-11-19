@@ -64,7 +64,7 @@ export const VisualizerControls: React.FC<VisualizerControlsProps> = ({
     },
   ];
 
-  const fftSizes = [256, 512, 1024, 2048, 4096, 8192];
+  const fftSizes = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
   const activeColorPreset = getPresetById(settings.spectrogramColorMap || settings.colorPresetId);
 
   const handleZoomSelect = (preset: typeof zoomPresets[0]) => {
@@ -315,6 +315,7 @@ export const VisualizerControls: React.FC<VisualizerControlsProps> = ({
           <select
             value={settings.fftSize}
             onChange={(e) => updateSettings({ fftSize: parseInt(e.target.value) })}
+            id="select-fft-size"
             className="bg-slate-900 border border-slate-700 text-xs text-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-cyan-500 cursor-pointer"
           >
             {fftSizes.map((size) => (

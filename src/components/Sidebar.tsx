@@ -23,6 +23,7 @@ import {
   NoiseBaselineProfile,
   VisualizerSettings,
   WorkspaceTab,
+  SOURCE_LABELS,
 } from '../types';
 import { getPresetById } from '../utils/colorGradients';
 
@@ -67,6 +68,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const weightingUnit =
     currentWeighting === 'A' ? 'dBA' : currentWeighting === 'C' ? 'dBC' : 'dBFS';
   const activeColorPreset = getPresetById(settings.spectrogramColorMap || settings.colorPresetId);
+
+  const stereo = metrics.stereo;
+  const fmtHz = (hz: number | null | undefined) =>
+    hz === null || hz === undefined ? '---' : hz >= 1000 ? `${(hz / 1000).toFixed(3)} kHz` : `${hz.toFixed(2)} Hz`;
 
   const bands = [
     { label: 'Sub-Bass (20–60 Hz)', value: metrics.subBass, barColor: 'bg-fuchsia-500' },
@@ -215,7 +220,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? engineState.micActive
                     ? 'MIC LIVE'
                     : 'MIC STANDBY'
-                  : `SOURCE: ${engineState.sourceType.toUpperCase()}`}
+                  : `SOURCE: ${SOURCE_LABELS[engineState.sourceType] ?? engineState.sourceType.toUpperCase()}`}
               </span>
             </div>
 
@@ -356,6 +361,47 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Stereo / Binaural Readout (per-channel, measured before EQ and pan) */}
+        <div id="stereo-readout" className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 flex flex-col gap-1.5">
+          <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <span>{stereo?.isCarrierPair ? 'Binaural carrier L / R' : 'Stereo L / R dominant'}</span>
+            <span className="font-mono tabular-nums text-[10px] text-slate-500">
+              {stereo ? `±${(stereo.resolutionHz / 2).toFixed(2)} Hz bins` : ''}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5 text-center">
+            <div className="bg-slate-900/90 rounded-lg p-1.5 border border-slate-800/60">
+              <div className="text-[10px] text-slate-400">Left</div>
+              <div id="stereo-left-hz" className="text-xs font-mono tabular-nums font-bold text-cyan-300 mt-0.5">
+                {fmtHz(stereo?.peakHzL)}
+              </div>
+            </div>
+            <div className="bg-slate-900/90 rounded-lg p-1.5 border border-slate-800/60">
+              <div className="text-[10px] text-slate-400">Right</div>
+              <div id="stereo-right-hz" className="text-xs font-mono tabular-nums font-bold text-pink-300 mt-0.5">
+                {fmtHz(stereo?.peakHzR)}
+              </div>
+            </div>
+            <div className="bg-slate-900/90 rounded-lg p-1.5 border border-slate-800/60">
+              <div className="text-[10px] text-slate-400">{stereo?.isBinaural || !stereo || stereo.beatHz === null || stereo.beatHz === 0 ? 'Beat' : 'L−R'}</div>
+              <div id="stereo-beat-hz" className="text-xs font-mono tabular-nums font-bold text-amber-300 mt-0.5">
+                {stereo && stereo.beatHz !== null ? `${stereo.beatHz.toFixed(2)} Hz` : '---'}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center justify-between text-[10px] font-mono tabular-nums text-slate-400">
+            <span>Correlation</span>
+            <span id="stereo-correlation" className="text-slate-200 font-semibold">
+              {stereo && stereo.correlation !== null ? `${stereo.correlation >= 0 ? '+' : ''}${stereo.correlation.toFixed(2)}` : '---'}
+            </span>
+          </div>
+          {stereo && (stereo.resolutionHz > 1.5) && (
+            <div className="text-[10px] text-slate-500 leading-snug">
+              Tip: set FFT to 32768 for ~0.1 Hz binaural accuracy.
+            </div>
+          )}
         </div>
 
         {/* 4-Band Live Energy Bars */}
