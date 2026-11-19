@@ -42,3 +42,14 @@ test('sine with a -40 dBc 2nd harmonic: harmonic listed, THD about 1 %', () => {
   assert.ok(Math.abs(d.harmonics[0].relativeDb - -40) < 0.5, `${d.harmonics[0].relativeDb}`);
   assert.ok(Math.abs(d.thdPercent - 1) < 0.1, `THD ${d.thdPercent}%`);
 });
+
+test('square wave (odd harmonics up to the 15th) stays single-tone: higher orders are still harmonics', () => {
+  const x = new Float32Array(N);
+  for (let h = 1; h <= 15; h += 2) {
+    const s = sine(1000 * h, SR, N, 0.4 / h);
+    for (let i = 0; i < N; i++) x[i] += s[i];
+  }
+  const d = analyzeTotalHarmonicDistortion(spec(withFloor(x)), SR);
+  assert.equal(d.status, 'single-tone');
+  assert.ok(d.harmonics.length >= 3, `harmonics listed: ${d.harmonics.length}`);
+});

@@ -33,6 +33,8 @@ export const OfflineAnalysisPanel: React.FC<Props> = ({ engineState, getAudioBuf
 
   // Results belong to one source; clear them when the source changes.
   useEffect(() => {
+    reqRef.current++; // any in-flight job now belongs to a previous source and is ignored
+    setBusy(false);
     setResult(null);
     setError(null);
   }, [engineState.fileName, engineState.sourceType, engineState.activeSampleId]);

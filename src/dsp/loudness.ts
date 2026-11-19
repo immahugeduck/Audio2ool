@@ -179,6 +179,8 @@ export function truePeakDb(channels: ArrayLike<number>[]): number {
     // candidate mask: samples within T of any sample >= m / l1
     let lastHot = -Infinity;
     const thr = sp / l1;
+    // Seed with the first halfT samples: the look-ahead below starts at index halfT.
+    for (let j = 0; j < Math.min(halfT, n); j++) if (Math.abs(c[j]) >= thr) lastHot = j;
     for (let i = 0; i < n; i++) {
       // look ahead so the window [i - halfT, i + halfT] is covered
       const ahead = i + halfT;

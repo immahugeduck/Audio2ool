@@ -505,7 +505,8 @@ export function analyzeTotalHarmonicDistortion(
   const nearHz = (hz: number, target: number) => Math.abs(hz - target) <= Math.max(2 * hzPerBin, 0.01 * target);
   const isHarmonicOfFund = (hz: number) => {
     const h = Math.round(hz / refinedFundHz);
-    return h >= 1 && h <= 8 && nearHz(hz, h * refinedFundHz);
+    // Membership is not limited to the 8 orders we measure: a square wave's 9th, 11th... are still harmonics.
+    return h >= 1 && nearHz(hz, h * refinedFundHz);
   };
   const competing = realPeaks.some((p) => !isHarmonicOfFund(p.hz) && p.db > maxDb - 20);
   if (competing) {

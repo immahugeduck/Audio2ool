@@ -59,3 +59,14 @@ test('true peak catches inter-sample overs (fs/4 sine at 45° phase)', () => {
   assert.ok(Math.abs(tp - 0) < 0.3, `tp ${tp}`);
   assert.ok(tp >= sp);
 });
+
+test('true peak of a transient in the first samples equals the same transient delayed', () => {
+  const burst = (offset: number) => {
+    const x = new Float32Array(400);
+    for (let i = 0; i < 24; i++) x[offset + i] = 0.5 * Math.sin((Math.PI / 2) * i + Math.PI / 4);
+    return x;
+  };
+  const atStart = truePeakDb([burst(0)]);
+  const delayed = truePeakDb([burst(60)]);
+  assert.ok(Math.abs(atStart - delayed) < 0.05, `start ${atStart.toFixed(3)} vs delayed ${delayed.toFixed(3)}`);
+});
