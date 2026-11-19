@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { 
-  AudioEngineState, 
+  AudioEngineState,
+  AudioSourceType,
   AudioMetrics, 
   VisualizerSettings,
   SignalGeneratorState,
@@ -105,6 +106,9 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
+  // Speaker-only gate after masterGain: live inputs mute the speakers here so the recorder /
+  // transcription stream (mediaStreamDestination, fed by masterGain) still receives audio.
+  const monitorGainRef = useRef<GainNode | null>(null);
   const bassFilterRef = useRef<BiquadFilterNode | null>(null);
   const midFilterRef = useRef<BiquadFilterNode | null>(null);
   const trebleFilterRef = useRef<BiquadFilterNode | null>(null);
@@ -121,6 +125,15 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const channelFloatTimeRRef = useRef<Float32Array<ArrayBuffer> | null>(null);
   const initialSampleLoadedRef = useRef(false);
   const mediaStreamDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+
+  /** masterGain = user volume/mute (feeds speakers AND the master stream); monitorGain = speakers only. */
+  const applyOutputGains = (st: { sourceType: AudioSourceType; isMuted: boolean; volume: number; micMonitoring: boolean }) => {
+    if (masterGainRef.current) masterGainRef.current.gain.value = st.isMuted ? 0 : st.volume;
+    if (monitorGainRef.current) {
+      const silenceSpeakers = st.sourceType === 'tab' || (st.sourceType === 'mic' && !st.micMonitoring);
+      monitorGainRef.current.gain.value = silenceSpeakers ? 0 : 1;
+    }
+  };
 
   // Signal Generator Node Refs
   const signalGenGainRef = useRef<GainNode | null>(null);
@@ -267,7 +280,11 @@ export function useAudioEngine(settings: VisualizerSettings) {
 
       lastNode.connect(analyser);
       analyser.connect(masterGain);
-      masterGain.connect(ctx.destination);
+      const monitorGain = ctx.createGain();
+      monitorGain.gain.value = 1;
+      masterGain.connect(monitorGain);
+      monitorGain.connect(ctx.destination);
+      monitorGainRef.current = monitorGain;
 
       bassFilterRef.current = bassFilter;
       midFilterRef.current = midFilter;
@@ -383,10 +400,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
       const startOffset = Math.max(0, Math.min(offsetSec, duration));
 
       // Buffer playback is always monitored (a previous mic/tab session may have muted the output).
-      if (masterGainRef.current) {
-        const st = engineStateRef.current;
-        masterGainRef.current.gain.value = st.isMuted ? 0 : st.volume;
-      }
+      applyOutputGains({ ...engineStateRef.current, sourceType: 'file' });
 
       source.start(0, startOffset);
       bufferSourceRef.current = source;
@@ -693,12 +707,8 @@ export function useAudioEngine(settings: VisualizerSettings) {
       micSource.connect(inputBus);
       micSourceRef.current = micSource;
 
-      if (masterGainRef.current) {
-        // Mute speaker output if micMonitoring is false to prevent feedback while analyzing
-        masterGainRef.current.gain.value = engineStateRef.current.micMonitoring 
-          ? (engineStateRef.current.isMuted ? 0 : engineStateRef.current.volume) 
-          : 0;
-      }
+      // Mute the speakers (not the recorder stream) if micMonitoring is false, to prevent feedback.
+      applyOutputGains({ ...engineStateRef.current, sourceType: 'mic' });
 
       // Refresh labels after permission grant
       refreshAudioDevices();
@@ -814,7 +824,8 @@ export function useAudioEngine(settings: VisualizerSettings) {
     tabSourceRef.current = src;
 
     // The captured tab is already audible on its own; never replay it (avoids doubling/echo).
-    if (masterGainRef.current) masterGainRef.current.gain.value = 0;
+    // Only the speaker branch is muted; recorder/transcription still get the tab audio.
+    applyOutputGains({ ...engineStateRef.current, sourceType: 'tab' });
 
     audioTracks[0].addEventListener('ended', () => {
       if (tabStreamRef.current !== stream) return;
@@ -896,13 +907,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
 
   const setVolume = useCallback((volume: number) => {
     setEngineState((prev) => {
-      if (masterGainRef.current) {
-        if ((prev.sourceType === 'mic' && !prev.micMonitoring) || prev.sourceType === 'tab') {
-          masterGainRef.current.gain.value = 0;
-        } else {
-          masterGainRef.current.gain.value = prev.isMuted ? 0 : volume;
-        }
-      }
+      applyOutputGains({ ...prev, volume });
       return { ...prev, volume };
     });
   }, []);
@@ -910,13 +915,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const toggleMute = useCallback(() => {
     setEngineState((prev) => {
       const nextMute = !prev.isMuted;
-      if (masterGainRef.current) {
-        if ((prev.sourceType === 'mic' && !prev.micMonitoring) || prev.sourceType === 'tab') {
-          masterGainRef.current.gain.value = 0;
-        } else {
-          masterGainRef.current.gain.value = nextMute ? 0 : prev.volume;
-        }
-      }
+      applyOutputGains({ ...prev, isMuted: nextMute });
       return { ...prev, isMuted: nextMute };
     });
   }, []);
@@ -924,11 +923,7 @@ export function useAudioEngine(settings: VisualizerSettings) {
   const toggleMicMonitoring = useCallback(() => {
     setEngineState((prev) => {
       const next = !prev.micMonitoring;
-      if (masterGainRef.current) {
-        if (prev.sourceType === 'mic') {
-          masterGainRef.current.gain.value = next ? (prev.isMuted ? 0 : prev.volume) : 0;
-        }
-      }
+      applyOutputGains({ ...prev, micMonitoring: next });
       return { ...prev, micMonitoring: next };
     });
   }, []);
