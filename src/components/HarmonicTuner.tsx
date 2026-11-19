@@ -41,69 +41,33 @@ export const HarmonicTuner: React.FC<HarmonicTunerProps> = ({
 
   const tuning = getTuningInfo();
 
-  // Detect Harmonics in FFT data
+  // Harmonic series from the engine's float-spectrum distortion analysis: only real peaks are
+  // listed (no padding to 8 orders), levels are dBc relative to the fundamental (power ratio).
   const getHarmonicsData = () => {
-    if (!isActive) return [];
-    const freqData = getFrequencyData();
-    if (!freqData || peakHz < 30) return [];
-
-    const harmonicsList: { order: number; expectedHz: number; actualHz: number; amplitude: number; isOdd: boolean }[] = [];
-    const binCount = freqData.length;
-    const nyquist = sampleRate / 2;
-    const hzPerBin = nyquist / binCount;
-
-    for (let order = 1; order <= 8; order++) {
-      const expectedHz = peakHz * order;
-      if (expectedHz > nyquist) break;
-
-      const expectedBin = Math.round(expectedHz / hzPerBin);
-      // Search narrow window around expected bin
-      let maxVal = 0;
-      let actualBin = expectedBin;
-
-      for (let offset = -3; offset <= 3; offset++) {
-        const b = expectedBin + offset;
-        if (b >= 0 && b < binCount) {
-          if (freqData[b] > maxVal) {
-            maxVal = freqData[b];
-            actualBin = b;
-          }
-        }
-      }
-
-      // Parabolic sub-bin interpolation for accurate overtone measurement
-      let delta = 0;
-      if (actualBin > 0 && actualBin < binCount - 1 && maxVal > 15) {
-        const a = freqData[actualBin - 1];
-        const b = freqData[actualBin];
-        const c = freqData[actualBin + 1];
-        const denom = a - 2 * b + c;
-        if (denom < 0) {
-          delta = 0.5 * (a - c) / denom;
-          delta = Math.max(-0.5, Math.min(0.5, delta));
-        }
-      }
-
-      const amplitude = Math.round((maxVal / 255) * 100);
-      const actualHz = (actualBin + delta) * hzPerBin;
-
-      harmonicsList.push({
-        order,
-        expectedHz: Math.round(expectedHz),
-        actualHz: Math.round(actualHz * 10) / 10,
-        amplitude,
-        isOdd: order % 2 !== 0,
-      });
-    }
-
-    return harmonicsList;
+    const d = metrics.distortion;
+    if (!isActive || !d || d.status !== 'single-tone' || d.fundamentalHz < 20) return [];
+    const toBar = (dbc: number) => Math.max(0, Math.min(100, Math.round(100 + (dbc * 100) / 80)));
+    return [
+      { order: 1, expectedHz: Math.round(d.fundamentalHz), actualHz: d.fundamentalHz, amplitude: 100, dbc: 0, isOdd: true },
+      ...d.harmonics.map((h) => ({
+        order: h.order,
+        expectedHz: Math.round(h.expectedHz),
+        actualHz: h.actualHz,
+        amplitude: toBar(h.relativeDb),
+        dbc: h.relativeDb,
+        isOdd: h.order % 2 !== 0,
+      })),
+    ];
   };
+  void getFrequencyData;
+  void sampleRate;
 
   const harmonics = getHarmonicsData();
 
   // Compute even vs odd harmonic energy balance
-  const evenEnergy = harmonics.filter(h => !h.isOdd && h.order > 1).reduce((acc, h) => acc + h.amplitude, 0);
-  const oddEnergy = harmonics.filter(h => h.isOdd && h.order > 1).reduce((acc, h) => acc + h.amplitude, 0);
+  const dbcPower = (dbc: number) => Math.pow(10, dbc / 10);
+  const evenEnergy = harmonics.filter(h => !h.isOdd && h.order > 1).reduce((acc, h) => acc + dbcPower(h.dbc), 0);
+  const oddEnergy = harmonics.filter(h => h.isOdd && h.order > 1).reduce((acc, h) => acc + dbcPower(h.dbc), 0);
   const totalHarmonicEnergy = evenEnergy + oddEnergy;
 
   const evenPct = totalHarmonicEnergy > 0 ? Math.round((evenEnergy / totalHarmonicEnergy) * 100) : 50;
@@ -212,7 +176,7 @@ export const HarmonicTuner: React.FC<HarmonicTunerProps> = ({
           </div>
 
           {/* Harmonic Overtones Series Grid */}
-          {harmonics.length > 0 ? (
+          {harmonics.length > 1 ? (
             <div className="flex flex-col gap-3">
               <div className="flex justify-between items-center text-xs border-b border-slate-800 pb-2">
                 <h4 className="font-bold text-slate-200 flex items-center gap-2">
@@ -257,14 +221,20 @@ export const HarmonicTuner: React.FC<HarmonicTunerProps> = ({
                       />
                     </div>
 
-                    <span className="text-[9px] font-mono text-slate-500 text-right">{h.amplitude}% energy</span>
+                    <span className="text-[9px] font-mono text-slate-500 text-right">{h.order === 1 ? '0 dBc (ref)' : `${h.dbc.toFixed(1)} dBc`}</span>
                   </div>
                 ))}
               </div>
             </div>
           ) : (
             <div className="bg-slate-950/60 rounded-xl border border-slate-850 p-4 text-center text-xs text-slate-500">
-              Play a sustained audio note or synth tone to analyze its harmonic overtones.
+              <span id="harmonics-status">
+                {metrics.distortion?.status === 'multi-tone'
+                  ? 'No harmonic series: several independent tones or music are present (THD N/A, multi-tone).'
+                  : metrics.distortion?.status === 'single-tone'
+                  ? 'Single tone with no measurable harmonics above the noise floor.'
+                  : 'Play a sustained audio note or synth tone to analyze its harmonic overtones.'}
+              </span>
             </div>
           )}
         </>

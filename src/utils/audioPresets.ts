@@ -1,4 +1,4 @@
-import { SampleTrack, AudioMetrics, FrequencyWeighting, DistortionAnalysis } from '../types';
+import { SampleTrack, AudioMetrics, FrequencyWeighting, DistortionAnalysis, BANDS } from '../types';
 import { analyzeTotalHarmonicDistortion } from './frequencyTools';
 
 export const SAMPLE_TRACKS: SampleTrack[] = [
@@ -144,7 +144,10 @@ export function calculateAudioMetrics(
   maxDecibels: number = -10,
   floatFreqData?: Float32Array | null,
   weighting: FrequencyWeighting = 'Z',
-  targetToneHz?: number
+  targetToneHz?: number,
+  /** Peak search span (the visible frequency zoom). Levels/bands still use the full band. */
+  spanMinHz: number = 20,
+  spanMaxHz: number = 20000
 ): AudioMetrics {
   const binCount = frequencyData.length;
   const hzPerBin = (sampleRate / 2) / (binCount || 1);
@@ -153,6 +156,8 @@ export function calculateAudioMetrics(
   // Ignore DC bin (0 Hz) and sub-20Hz infrasonic offset when locating audible dominant pitch
   const minAudibleBin = Math.max(1, Math.ceil(20 / hzPerBin));
   const maxAudibleBin = Math.min(binCount - 1, Math.floor(20000 / hzPerBin));
+  const peakMinBin = Math.max(minAudibleBin, Math.ceil(Math.max(20, spanMinHz) / hzPerBin));
+  const peakMaxBin = Math.min(maxAudibleBin, Math.floor(Math.min(20000, spanMaxHz) / hzPerBin));
 
   let maxVal = 0;
   let maxIndex = 0;
@@ -164,9 +169,9 @@ export function calculateAudioMetrics(
   let audibleBinCount = 0;
 
   // Band index boundaries
-  const subBassMaxBin = Math.min(binCount - 1, Math.max(1, Math.floor(60 / hzPerBin)));
-  const bassMaxBin = Math.min(binCount - 1, Math.max(subBassMaxBin + 1, Math.floor(250 / hzPerBin)));
-  const midMaxBin = Math.min(binCount - 1, Math.max(bassMaxBin + 1, Math.floor(4000 / hzPerBin)));
+  const subBassMaxBin = Math.min(binCount - 1, Math.max(1, Math.floor(BANDS.subBass.maxHz / hzPerBin)));
+  const bassMaxBin = Math.min(binCount - 1, Math.max(subBassMaxBin + 1, Math.floor(BANDS.bass.maxHz / hzPerBin)));
+  const midMaxBin = Math.min(binCount - 1, Math.max(bassMaxBin + 1, Math.floor(BANDS.mid.maxHz / hzPerBin)));
 
   let subBassSum = 0, subBassCount = 0;
   let bassSum = 0, bassCount = 0;
@@ -182,7 +187,7 @@ export function calculateAudioMetrics(
       totalMagnitudeSum += val;
       audibleBinCount++;
 
-      if (val > maxVal) {
+      if (val > maxVal && i >= peakMinBin && i <= peakMaxBin) {
         maxVal = val;
         maxIndex = i;
       }
@@ -295,7 +300,7 @@ export function calculateAudioMetrics(
 
   // High Precision Parabolic (Quadratic) Peak Interpolation:
   let refinedPeakHz = 0;
-  if (maxVal > 18 && maxIndex > minAudibleBin && maxIndex < binCount - 1) {
+  if (maxVal > 18 && maxIndex > peakMinBin && maxIndex < peakMaxBin && maxIndex < binCount - 1) {
     let alpha: number, beta: number, gamma: number;
     if (floatFreqData && floatFreqData.length > maxIndex) {
       alpha = floatFreqData[maxIndex - 1];

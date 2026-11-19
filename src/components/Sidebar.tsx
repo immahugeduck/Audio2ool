@@ -24,6 +24,8 @@ import {
   VisualizerSettings,
   WorkspaceTab,
   SOURCE_LABELS,
+  BANDS,
+  formatBandRange,
 } from '../types';
 import { getPresetById } from '../utils/colorGradients';
 
@@ -74,10 +76,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     hz === null || hz === undefined ? '---' : hz >= 1000 ? `${(hz / 1000).toFixed(3)} kHz` : `${hz.toFixed(2)} Hz`;
 
   const bands = [
-    { label: 'Sub-Bass (20–60 Hz)', value: metrics.subBass, barColor: 'bg-fuchsia-500' },
-    { label: 'Bass (60–250 Hz)', value: metrics.bass, barColor: 'bg-cyan-400' },
-    { label: 'Midrange (250–4k Hz)', value: metrics.mid, barColor: 'bg-emerald-400' },
-    { label: 'Treble (4k–20k Hz)', value: metrics.treble, barColor: 'bg-amber-400' },
+    { label: `${BANDS.subBass.label} (${formatBandRange(BANDS.subBass)})`, value: metrics.subBass, barColor: 'bg-fuchsia-500' },
+    { label: `${BANDS.bass.label} (${formatBandRange(BANDS.bass)})`, value: metrics.bass, barColor: 'bg-cyan-400' },
+    { label: `${BANDS.mid.label} (${formatBandRange(BANDS.mid)})`, value: metrics.mid, barColor: 'bg-emerald-400' },
+    { label: `${BANDS.treble.label} (${formatBandRange(BANDS.treble)})`, value: metrics.treble, barColor: 'bg-amber-400' },
   ];
 
   const isListening = engineState.sourceType === 'mic' || engineState.isPlaying;
@@ -333,7 +335,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <div className="flex items-baseline justify-between gap-2">
             <span className="text-2xl font-mono tabular-nums font-bold text-cyan-300 tracking-tight whitespace-nowrap">
-              {metrics.peakFrequencyHz > 16 ? metrics.peakFrequencyFormatted : '0.0 Hz'}
+              {metrics.peakFrequencyHz > 16
+                ? metrics.peakFrequencyFormatted
+                : settings.minFreqHz > 20 || settings.maxFreqHz < 20000
+                ? 'No peak in span'
+                : '0.0 Hz'}
             </span>
             <span className="text-xs font-mono tabular-nums text-slate-400 whitespace-nowrap">
               {metrics.peakFrequencyHz > 16 ? `${metrics.prominenceDb} dBFS` : '-100 dBFS'}
@@ -430,6 +436,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-slate-200 font-semibold">
             {metrics.distortion && metrics.distortion.isToneDetected
               ? `${metrics.distortion.thdPercent}% THD`
+              : metrics.distortion?.status === 'multi-tone'
+              ? 'THD N/A (multi-tone)'
               : `${profile.noiseFloorDb} dB Floor`}
           </span>
           <span className="text-emerald-400 font-semibold">+{profile.snrDb} dB SNR</span>

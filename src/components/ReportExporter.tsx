@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Download,
   FileText,
@@ -19,6 +19,8 @@ import {
   NoiseBaselineProfile,
   AiNoiseDetectionResult,
   AcousticDiagnosticReport,
+  BANDS,
+  formatBandRange,
 } from '../types';
 
 interface ReportExporterProps {
@@ -42,6 +44,14 @@ export const ReportExporter: React.FC<ReportExporterProps> = ({
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  // Close on Escape
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const timestamp = new Date().toLocaleString();
@@ -62,11 +72,11 @@ export const ReportExporter: React.FC<ReportExporterProps> = ({
 - **RMS Volume Level:** ${metrics.rmsDb} dBFS (Weighting: ${metrics.weighting || 'Z'})
 - **Instantaneous Peak Level:** ${metrics.peakDb} dBFS
 - **Crest Factor (Dynamic Peak-to-Average):** +${metrics.crestFactorDb} dB
-- **Sub-Bass Energy (20-60 Hz):** ${metrics.subBass} %
-- **Bass Energy (60-250 Hz):** ${metrics.bass} %
-- **Midrange Energy (250-2 kHz):** ${metrics.mid} %
-- **Treble Energy (2k-20 kHz):** ${metrics.treble} %
-- **Harmonic Distortion (THD):** ${metrics.distortion?.isToneDetected ? `${metrics.distortion.thdPercent}% (${metrics.distortion.thdDb} dB)` : 'Broadband / Inharmonic'}
+- **${BANDS.subBass.label} Energy (${formatBandRange(BANDS.subBass)}):** ${metrics.subBass} %
+- **${BANDS.bass.label} Energy (${formatBandRange(BANDS.bass)}):** ${metrics.bass} %
+- **${BANDS.mid.label} Energy (${formatBandRange(BANDS.mid)}):** ${metrics.mid} %
+- **${BANDS.treble.label} Energy (${formatBandRange(BANDS.treble)}):** ${metrics.treble} %
+- **Harmonic Distortion (THD):** ${metrics.distortion?.isToneDetected ? `${metrics.distortion.thdPercent}% (${metrics.distortion.thdDb} dB)` : metrics.distortion?.status === 'multi-tone' ? 'N/A (multi-tone / music)' : 'Broadband / Inharmonic'}
 - **Analyzer Frame Rate:** ${metrics.fps} FPS
 
 ---

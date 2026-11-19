@@ -1187,7 +1187,9 @@ export function useAudioEngine(settings: VisualizerSettings) {
             currentSettings.maxDecibels,
             floatFrequencyDataRef.current,
             weightingRef.current,
-            targetToneHz
+            targetToneHz,
+            currentSettings.minFreqHz,
+            currentSettings.maxFreqHz
           );
 
           // Per-channel (pre-EQ) stereo / binaural readout
@@ -1207,7 +1209,11 @@ export function useAudioEngine(settings: VisualizerSettings) {
               sampleRate,
               aL.fftSize,
               corr,
-              { minHz: 20, maxHz: Math.min(20000, sampleRate / 2), minDb: currentSettings.minDecibels }
+              {
+                minHz: Math.max(20, currentSettings.minFreqHz),
+                maxHz: Math.min(20000, currentSettings.maxFreqHz, sampleRate / 2),
+                minDb: currentSettings.minDecibels,
+              }
             );
             stereo = {
               peakHzL: readout.leftHz,
@@ -1311,6 +1317,23 @@ export function useAudioEngine(settings: VisualizerSettings) {
       return new Float32Array(0);
     }, []),
     getTimeDomainData,
+    /** Full-window float time-domain data of the (post-EQ) mono analyser. */
+    getFloatTimeDomainData: useCallback(() => {
+      if (analyserRef.current && floatTimeDataRef.current) {
+        analyserRef.current.getFloatTimeDomainData(floatTimeDataRef.current);
+        return floatTimeDataRef.current;
+      }
+      return new Float32Array(0);
+    }, []),
+    /** Per-channel float time-domain data from the pre-EQ measurement tap. */
+    getStereoTimeData: useCallback(() => {
+      const aL = analyserLRef.current, aR = analyserRRef.current;
+      const l = channelFloatTimeLRef.current, r = channelFloatTimeRRef.current;
+      if (!aL || !aR || !l || !r) return null;
+      aL.getFloatTimeDomainData(l);
+      aR.getFloatTimeDomainData(r);
+      return { left: l, right: r };
+    }, []),
     weighting,
     setWeighting,
     mediaStreamDestinationRef,
@@ -1324,6 +1347,8 @@ export function useAudioEngine(settings: VisualizerSettings) {
     updateIsolator,
     // Audio stream getters for Studio Recorder
     getAudioContext: () => audioCtxRef.current,
+    /** The decoded buffer behind file / URL / sample playback (null for live inputs). */
+    getAudioBuffer: useCallback(() => audioBufferRef.current, []),
     getMasterStream: () => mediaStreamDestinationRef.current?.stream || null,
     getMicStream: () => mediaStreamRef.current,
   };

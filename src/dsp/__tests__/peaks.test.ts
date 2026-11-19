@@ -117,3 +117,25 @@ test('shared two-tone content (reference file) gives no binaural pair and L = R'
   assert.equal(out.differenceHz, 0);
   assert.equal(out.sameFrequency, true);
 });
+
+test('offline analysis: reference two tones at 440.000 / 1000.000 Hz within 0.01 Hz, binaural 6.000 Hz within 0.01 Hz', async () => {
+  const { analyzeOffline } = await import('../offline');
+  const n = SR * 8;
+  const a = dbfsToAmplitude(-12);
+  const x = sine(440, SR, n, a);
+  const y = sine(1000, SR, n, a);
+  for (let i = 0; i < n; i++) x[i] += y[i];
+  const ref = analyzeOffline({ channels: [x, x], sampleRate: SR });
+  const hz = ref.peaksL.map((p) => p.hz).sort((p, q) => p - q);
+  assert.equal(hz.length, 2, hz.join(','));
+  assert.ok(Math.abs(hz[0] - 440) < 0.01 && Math.abs(hz[1] - 1000) < 0.01, hz.join(','));
+  assert.ok(Math.abs(ref.samplePeakDb - -6.02) < 0.1, `peak ${ref.samplePeakDb}`);
+
+  const l = sine(200, SR, n, 0.3);
+  const r = sine(206, SR, n, 0.3);
+  const th = analyzeOffline({ channels: [l, r], sampleRate: SR });
+  assert.equal(th.stereo?.mode, 'binaural-pair');
+  assert.ok(Math.abs(th.stereo!.leftHz! - 200) < 0.01);
+  assert.ok(Math.abs(th.stereo!.rightHz! - 206) < 0.01);
+  assert.ok(Math.abs(th.stereo!.differenceHz! - 6) < 0.01);
+});

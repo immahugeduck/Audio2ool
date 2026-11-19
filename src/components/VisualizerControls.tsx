@@ -34,10 +34,11 @@ export const VisualizerControls: React.FC<VisualizerControlsProps> = ({
     { id: 'bars', label: 'Precision Bars', desc: 'Calibrated FFT Spectrum', icon: <BarChart2 className="w-3.5 h-3.5" /> },
     { id: 'curve', label: 'Spectral Spline', desc: 'Continuous SPL Contour', icon: <Waves className="w-3.5 h-3.5" /> },
     { id: 'oscilloscope', label: 'Oscilloscope', desc: 'Zero-Cross Wave Line', icon: <Activity className="w-3.5 h-3.5" /> },
-    { id: 'waveform', label: 'Waveform', desc: 'Time-Domain Envelope', icon: <Eye className="w-3.5 h-3.5" /> },
+    { id: 'waveform', label: 'Waveform', desc: 'Time-Domain (ms axis)', icon: <Eye className="w-3.5 h-3.5" /> },
     { id: 'waterfall', label: '3D Waterfall', desc: '3D Spectral Rainfall', icon: <Layers className="w-3.5 h-3.5" /> },
     { id: 'spectrogram', label: '2D Heatmap', desc: 'Time-Frequency Map', icon: <Grid className="w-3.5 h-3.5" /> },
     { id: 'hybrid', label: 'Dual Scope', desc: 'FFT + Oscilloscope', icon: <Sun className="w-3.5 h-3.5" /> },
+    { id: 'goniometer', label: 'Goniometer', desc: 'Stereo L/R Phase', icon: <Activity className="w-3.5 h-3.5" /> },
   ];
 
   const zoomPresets: {
@@ -110,7 +111,7 @@ export const VisualizerControls: React.FC<VisualizerControlsProps> = ({
       </div>
 
       {/* 1. Display / View Mode Selector */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2">
         {modes.map((m) => {
           const isSelected = settings.mode === m.id;
           return (

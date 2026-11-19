@@ -22,6 +22,7 @@ import { FrequencyToolsPanel } from './components/FrequencyToolsPanel';
 import { StudioRecorder } from './components/StudioRecorder';
 import { AiNoiseDetector } from './components/AiNoiseDetector';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
+import { OfflineAnalysisPanel } from './components/OfflineAnalysisPanel';
 import { Music, Sliders, Disc, Settings, Mic, Sparkles, FileText } from 'lucide-react';
 
 export default function App() {
@@ -93,6 +94,8 @@ export default function App() {
     getFrequencyData,
     getFloatFrequencyData,
     getTimeDomainData,
+    getFloatTimeDomainData,
+    getStereoTimeData,
     weighting,
     setWeighting,
     // Frequency Generator & Isolator tools
@@ -104,6 +107,7 @@ export default function App() {
     updateIsolator,
     // Audio stream getters for Studio Recorder & AI Suite
     getAudioContext,
+    getAudioBuffer,
     getMasterStream,
     getMicStream,
     loadedFile,
@@ -119,7 +123,8 @@ export default function App() {
   } = useNoiseBaseline(
     getFrequencyData,
     metrics,
-    engineState.sourceType === 'mic' || engineState.isPlaying
+    engineState.sourceType === 'mic' || engineState.isPlaying,
+    engineState.sourceType
   );
 
   // The engine loads the built-in sample once on start-up. Switching workspace views must
@@ -183,6 +188,9 @@ export default function App() {
               metrics={metrics}
               isPlaying={engineState.isPlaying}
               sampleRate={getAudioContext()?.sampleRate || 44100}
+              getFloatFrequencyData={getFloatFrequencyData}
+              getFloatTimeDomainData={getFloatTimeDomainData}
+              getStereoTimeData={getStereoTimeData}
             />
 
             {/* 2. Visualizer Views, Frequency Span Zoom & Scope Calibration Bar */}
@@ -328,6 +336,13 @@ export default function App() {
                         toggleMicMonitoring={toggleMicMonitoring}
                       />
 
+                      <OfflineAnalysisPanel
+                        engineState={engineState}
+                        getAudioBuffer={getAudioBuffer}
+                        minFreqHz={settings.minFreqHz}
+                        maxFreqHz={settings.maxFreqHz}
+                      />
+
                       <UrlAudioAnalyzer
                         engineState={engineState}
                         loadAudioFromUrl={loadAudioFromUrl}
@@ -348,6 +363,7 @@ export default function App() {
                         metrics={metrics}
                         currentTime={engineState.currentTime}
                         isPlaying={engineState.isPlaying}
+                        sourceKey={`${engineState.sourceType}:${engineState.fileName ?? engineState.activeSampleId}`}
                       />
                     </div>
                   </div>
