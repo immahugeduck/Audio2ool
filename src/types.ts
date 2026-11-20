@@ -1,6 +1,18 @@
 export type VisualizationMode = 'bars' | 'curve' | 'oscilloscope' | 'waterfall' | 'spectrogram' | 'waveform' | 'hybrid';
 
-export type AudioSourceType = 'sample' | 'file' | 'mic' | 'url';
+export type AudioSourceType = 'sample' | 'file' | 'mic' | 'url' | 'tab';
+
+/** Live inputs (no file timeline). 'tab' is browser tab-audio capture via getDisplayMedia. */
+export const isLiveInputSource = (t: AudioSourceType): boolean => t === 'mic' || t === 'tab';
+
+/** Human-readable label for the active measurement source. Never hides what is really measured. */
+export const SOURCE_LABELS: Record<AudioSourceType, string> = {
+  sample: 'BUILT-IN SAMPLE',
+  file: 'FILE',
+  mic: 'MIC',
+  url: 'URL STREAM',
+  tab: 'TAB CAPTURE',
+};
 
 export type WorkspaceTab = 'live' | 'media' | 'tools' | 'recorder' | 'ai';
 
@@ -31,7 +43,7 @@ export type SpectrogramColorMap = 'thermal' | 'viridis' | 'inferno' | 'magma' | 
 
 export interface VisualizerSettings {
   mode: VisualizationMode;
-  fftSize: number; // 128, 256, 512, 1024, 2048, 4096, 8192
+  fftSize: number; // 128 ... 32768 (Web Audio AnalyserNode maximum)
   smoothing: number; // 0.0 - 0.99
   minDecibels: number; // e.g. -90
   maxDecibels: number; // e.g. -10
@@ -88,6 +100,7 @@ export interface AudioEngineState {
   isBluetoothConnected: boolean;
   bluetoothDeviceName: string | null;
   phoneMicDeviceName: string | null;
+  tabCaptureError?: string | null;
 }
 
 export type FrequencyWeighting = 'Z' | 'A' | 'C';
@@ -136,6 +149,25 @@ export interface AudioMetrics {
   treble: number; // 0 - 100
   fps: number;
   distortion?: DistortionAnalysis;
+  stereo?: StereoMetrics;
+}
+
+/** Per-channel measurements taken before EQ/isolator/pan so tone controls never change them. */
+export interface StereoMetrics {
+  peakHzL: number | null;
+  peakHzR: number | null;
+  peakDbL: number | null;
+  peakDbR: number | null;
+  /** |fL - fR| (0 when both channels share the same dominant tone); null if either side has no tone. */
+  beatHz: number | null;
+  /** True when 0 < |fL - fR| <= 40 Hz (audible binaural-beat range). */
+  isBinaural: boolean;
+  /** True when L/R are channel-exclusive carrier tones (binaural pair), not just each side's loudest peak. */
+  isCarrierPair: boolean;
+  /** Inter-channel correlation (-1 .. +1); null when silent. */
+  correlation: number | null;
+  /** Analyser resolution (sampleRate / fftSize) used for this reading. */
+  resolutionHz: number;
 }
 
 export interface SampleTrack {

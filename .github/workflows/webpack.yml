@@ -22,7 +22,15 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
 
+    # The repo's lockfile is bun.lock (what Vercel installs from). Plain `npm install` without a
+    # lockfile hit npm's optional-dependency bug ("Cannot find native binding" from
+    # @tailwindcss/oxide), so CI has been red on main since early November.
+    - uses: oven-sh/setup-bun@v2
+
     - name: Build
       run: |
-        npm install
+        bun install --frozen-lockfile
         npm run build
+
+    - name: DSP unit tests
+      run: npm test

@@ -200,6 +200,14 @@ export const AudioControls: React.FC<AudioControlsProps> = ({
           </div>
         )}
 
+        {/* Tab Capture Indicator */}
+        {engineState.sourceType === 'tab' && (
+          <div id="source-indicator-tab" className="text-xs text-emerald-300 font-medium truncate max-w-[260px] flex items-center gap-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/30">
+            <Radio className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+            <span className="truncate">Tab capture: {engineState.fileName || 'Browser tab'} (playback levels)</span>
+          </div>
+        )}
+
         {/* Mic Speaker Output Toggle */}
         {engineState.sourceType === 'mic' && toggleMicMonitoring && (
           <button
@@ -252,14 +260,14 @@ export const AudioControls: React.FC<AudioControlsProps> = ({
             max={engineState.duration || 100}
             step={0.1}
             value={engineState.currentTime}
-            disabled={engineState.sourceType === 'mic'}
+            disabled={engineState.sourceType === 'mic' || engineState.sourceType === 'tab'}
             onChange={(e) => seek(parseFloat(e.target.value))}
             id="input-seek-bar"
             className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 disabled:opacity-40"
           />
 
           <span className="text-xs font-mono text-slate-400 min-w-[42px]">
-            {engineState.sourceType === 'mic' ? 'LIVE' : formatTime(engineState.duration)}
+            {engineState.sourceType === 'mic' || engineState.sourceType === 'tab' ? 'LIVE' : formatTime(engineState.duration)}
           </span>
         </div>
 
