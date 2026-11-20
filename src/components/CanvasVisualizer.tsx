@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { VisualizerSettings, AudioMetrics, SpectrogramColorMap } from '../types';
+import { VisualizerSettings, AudioMetrics, SpectrogramColorMap, TIME_DOMAIN_MODES } from '../types';
 import { COLOR_PRESETS, getPresetById, createCanvasGradient, getPeakColor } from '../utils/colorGradients';
 import { 
   frequencyToRatio, 
@@ -153,6 +153,9 @@ interface CanvasVisualizerProps {
   metrics: AudioMetrics;
   isPlaying: boolean;
   sampleRate?: number;
+  getFloatFrequencyData?: () => Float32Array;
+  getFloatTimeDomainData?: () => Float32Array;
+  getStereoTimeData?: () => { left: Float32Array; right: Float32Array } | null;
 }
 
 export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
@@ -162,6 +165,9 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
   metrics,
   isPlaying,
   sampleRate = 44100,
+  getFloatFrequencyData,
+  getFloatTimeDomainData,
+  getStereoTimeData,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -794,18 +800,41 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
             // Scroll existing image down by 2 pixels
             sCtx.drawImage(sCanvas, 0, 0, width, height, 0, 2, width, height);
 
-            // Render new line at top (y=0)
+            // Render new line at top (y=0). Uses the float spectrum with a 0 dBFS ceiling so loud
+            // content keeps its detail instead of clipping at the byte analyser's maxDecibels.
+            const floatSpec = getFloatFrequencyData ? getFloatFrequencyData() : null;
+            const heatFloorDb = settings.minDecibels;
+            const heatCeilDb = 0;
             for (let x = 0; x < width; x++) {
               const binIdx = getBinForRatio(x / width, settings.logScale, sampleRate, binCount, minHz, maxHz);
-              const intensity = freqData[binIdx] || 0;
-
-              const normalized = Math.min(1.0, (intensity / 255) * settings.sensitivity);
+              let normalized: number;
+              if (floatSpec && floatSpec.length > binIdx) {
+                const db = floatSpec[binIdx];
+                normalized = isFinite(db) ? Math.max(0, Math.min(1, (db - heatFloorDb) / (heatCeilDb - heatFloorDb))) : 0;
+              } else {
+                const intensity = freqData[binIdx] || 0;
+                normalized = Math.min(1.0, (intensity / 255) * settings.sensitivity);
+              }
               const [r, g, b] = mapSpectrogramColor(normalized, colorMap);
 
               sCtx.fillStyle = `rgb(${r},${g},${b})`;
               sCtx.fillRect(x, 0, 1, 2);
             }
             ctx.drawImage(sCanvas, 0, 0);
+
+            // dB colour legend
+            const legendW = 140, legendH = 8, lx = width - legendW - 110, ly = 12;
+            for (let i = 0; i < legendW; i++) {
+              const [r, g, b] = mapSpectrogramColor(i / (legendW - 1), colorMap);
+              ctx.fillStyle = `rgb(${r},${g},${b})`;
+              ctx.fillRect(lx + i, ly, 1, legendH);
+            }
+            ctx.fillStyle = 'rgba(226, 232, 240, 0.85)';
+            ctx.font = '9px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(`${heatFloorDb} dB`, lx, ly + legendH + 10);
+            ctx.textAlign = 'right';
+            ctx.fillText(floatSpec ? '0 dBFS' : `${settings.maxDecibels} dB`, lx + legendW, ly + legendH + 10);
           }
         }
       }
@@ -997,29 +1026,125 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       // WAVEFORM TIME-DOMAIN MODE
       // -------------------------------------------------------------
       else if (settings.mode === 'waveform') {
-        ctx.beginPath();
-        const sliceWidth = width / timeData.length;
-        let x = 0;
+        // Real time-domain plot: zero-centred, full float window, time axis in ms, L and R when available.
+        const centerY = plotTopY + plotHeight / 2;
+        const halfH = plotHeight / 2;
+        const stereoData = getStereoTimeData ? getStereoTimeData() : null;
+        const mono = getFloatTimeDomainData ? getFloatTimeDomainData() : null;
+        const traces: { data: ArrayLike<number>; color: string }[] = stereoData
+          ? [
+              { data: stereoData.left, color: 'rgba(34, 211, 238, 0.9)' },
+              { data: stereoData.right, color: 'rgba(244, 114, 182, 0.75)' },
+            ]
+          : mono && mono.length
+          ? [{ data: mono, color: preset.colors[0] || '#00f0ff' }]
+          : [{ data: Array.from(timeData as ArrayLike<number>, (v: number) => v / 128 - 1), color: preset.colors[0] || '#00f0ff' }];
+        const n = traces[0].data.length || 1;
 
-        for (let i = 0; i < timeData.length; i++) {
-          const v = timeData[i] / 128.0; // 128 is zero crossing
-          const y = (v * (height / 2.5)) + (height / 2 - 15);
-
-          if (i === 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
-          x += sliceWidth;
+        // amplitude grid: 0, ±0.5 (-6 dBFS), ±1 (0 dBFS)
+        ctx.save();
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        [1, 0.5, 0, -0.5, -1].forEach((a) => {
+          const y = centerY - a * halfH;
+          ctx.strokeStyle = a === 0 ? 'rgba(148, 163, 184, 0.45)' : 'rgba(51, 65, 85, 0.35)';
+          ctx.setLineDash(a === 0 ? [] : [4, 4]);
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+          const lbl = a === 0 ? '0' : Math.abs(a) === 1 ? `${a > 0 ? '+' : '-'}1 (0 dBFS)` : `${a > 0 ? '+' : '-'}0.5 (-6 dBFS)`;
+          ctx.fillText(lbl, 6, y - 3);
+        });
+        // time axis
+        const totalMs = (n / sampleRate) * 1000;
+        const steps = 8;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.75)';
+        for (let i = 0; i <= steps; i++) {
+          const x = (i / steps) * width;
+          const ms = (i / steps) * totalMs;
+          ctx.fillText(`${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`, Math.min(width - 22, Math.max(18, x)), height - 12);
         }
+        ctx.restore();
 
-        ctx.lineTo(width, height / 2 - 15);
-        ctx.strokeStyle = preset.colors[0] || '#00f0ff';
-        ctx.lineWidth = 2.5;
-        ctx.shadowColor = preset.glowColor;
-        ctx.shadowBlur = 12;
+        traces.forEach((t) => {
+          ctx.beginPath();
+          const len = t.data.length;
+          for (let i = 0; i < len; i++) {
+            const x = (i / Math.max(1, len - 1)) * width;
+            const y = centerY - Math.max(-1, Math.min(1, t.data[i])) * halfH;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = t.color;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        });
+        if (stereoData) {
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'right';
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.9)';
+          ctx.fillText('L', width - 30, plotTopY + 4);
+          ctx.fillStyle = 'rgba(244, 114, 182, 0.9)';
+          ctx.fillText('R', width - 16, plotTopY + 4);
+        }
+      }
+
+      // -------------------------------------------------------------
+      // GONIOMETER (LISSAJOUS: MID UP, SIDE ACROSS) + CORRELATION BAR
+      // -------------------------------------------------------------
+      else if (settings.mode === 'goniometer') {
+        const stereoData = getStereoTimeData ? getStereoTimeData() : null;
+        const size = Math.min(width, plotHeight) * 0.9;
+        const cx = width / 2;
+        const cy = plotTopY + plotHeight / 2;
+        const r = size / 2;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(51, 65, 85, 0.5)';
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.stroke();
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(cx - r * Math.SQRT1_2, cy - r * Math.SQRT1_2); ctx.lineTo(cx + r * Math.SQRT1_2, cy + r * Math.SQRT1_2);
+        ctx.moveTo(cx + r * Math.SQRT1_2, cy - r * Math.SQRT1_2); ctx.lineTo(cx - r * Math.SQRT1_2, cy + r * Math.SQRT1_2);
         ctx.stroke();
-        ctx.shadowBlur = 0;
+        ctx.setLineDash([]);
+        ctx.font = '10px monospace';
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.75)';
+        ctx.textAlign = 'center';
+        ctx.fillText('M (L+R)', cx, cy - r - 4);
+        ctx.fillText('L', cx - r * Math.SQRT1_2 - 8, cy - r * Math.SQRT1_2);
+        ctx.fillText('R', cx + r * Math.SQRT1_2 + 8, cy - r * Math.SQRT1_2);
+        ctx.fillText('S', cx + r + 10, cy + 3);
+        if (stereoData) {
+          const { left, right } = stereoData;
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.55)';
+          const step = Math.max(1, Math.floor(left.length / 4096));
+          for (let i = 0; i < left.length; i += step) {
+            const mid = (left[i] + right[i]) * Math.SQRT1_2;
+            const side = (left[i] - right[i]) * Math.SQRT1_2;
+            ctx.fillRect(cx + Math.max(-1, Math.min(1, side)) * r, cy - Math.max(-1, Math.min(1, mid)) * r, 1.5, 1.5);
+          }
+        } else {
+          ctx.fillText('No stereo data', cx, cy + 4);
+        }
+        // correlation bar
+        const corr = metrics.stereo?.correlation ?? null;
+        const barW = Math.min(360, width - 80), bx = (width - barW) / 2, by = height - 24;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.fillRect(bx, by, barW, 8);
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.75)';
+        ctx.textAlign = 'center';
+        ctx.fillText('-1', bx - 12, by + 8);
+        ctx.fillText('+1', bx + barW + 14, by + 8);
+        ctx.fillText('0', bx + barW / 2, by - 3);
+        if (corr !== null) {
+          const x = bx + ((corr + 1) / 2) * barW;
+          ctx.fillStyle = corr < 0 ? '#f43f5e' : corr < 0.3 ? '#f59e0b' : '#34d399';
+          ctx.fillRect(Math.min(x, bx + barW / 2), by, Math.abs(x - (bx + barW / 2)), 8);
+          ctx.fillStyle = 'rgba(226, 232, 240, 0.95)';
+          ctx.fillText(`Correlation ${corr >= 0 ? '+' : ''}${corr.toFixed(2)}`, bx + barW / 2, by + 20);
+        }
+        ctx.restore();
       }
 
       // -------------------------------------------------------------
@@ -1061,7 +1186,8 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       // -------------------------------------------------------------
       // OVERLAYS: Hz FREQUENCY SCALE & dB GRID
       // -------------------------------------------------------------
-      if (settings.showHzScale) {
+      const isTimeDomainMode = TIME_DOMAIN_MODES.includes(settings.mode);
+      if (settings.showHzScale && !isTimeDomainMode) {
         ctx.fillStyle = 'rgba(148, 163, 184, 0.75)';
         ctx.font = '10px monospace';
         ctx.textAlign = 'center';
@@ -1097,7 +1223,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
         });
       }
 
-      if (settings.showDbGrid) {
+      if (settings.showDbGrid && !isTimeDomainMode && settings.mode !== 'spectrogram') {
         ctx.fillStyle = 'rgba(148, 163, 184, 0.5)';
         ctx.font = '10px monospace';
         ctx.textAlign = 'left';
@@ -1126,7 +1252,7 @@ export const CanvasVisualizer: React.FC<CanvasVisualizerProps> = ({
       // -------------------------------------------------------------
       // INTERACTIVE CURSOR INSPECTION CROSSHAIR & READOUT BADGE
       // -------------------------------------------------------------
-      if (hoverStateRef.current && hoverStateRef.current.active) {
+      if (hoverStateRef.current && hoverStateRef.current.active && !isTimeDomainMode) {
         const hx = hoverStateRef.current.x;
         const hy = hoverStateRef.current.y;
 

@@ -187,6 +187,8 @@ export interface StereoToneOptions extends PeakSearchOptions {
   exclusivityDb?: number;
   /** Peaks per channel considered when searching for a binaural carrier pair. Default 12. */
   candidatePeaks?: number;
+  /** L/R frequencies closer than this count as the same tone. Default 0.05 Hz. */
+  sameToleranceHz?: number;
 }
 
 /**
@@ -204,7 +206,7 @@ export function analyzeStereoTones(
   correlation: number | null,
   options: StereoToneOptions = {}
 ): BinauralReadout & { mode: 'binaural-pair' | 'dominant' } {
-  const { exclusivityDb = 12, candidatePeaks = 12, ...peakOpts } = options;
+  const { exclusivityDb = 12, candidatePeaks = 12, sameToleranceHz = 0.05, ...peakOpts } = options;
   const pl = findSpectralPeaks(specL, sampleRate, fftSize, { ...peakOpts, maxPeaks: candidatePeaks });
   const pr = findSpectralPeaks(specR, sampleRate, fftSize, { ...peakOpts, maxPeaks: candidatePeaks });
 
@@ -222,7 +224,7 @@ export function analyzeStereoTones(
   }
 
   if (best) {
-    return { ...computeBinauralReadout([best.l], [best.r], correlation), mode: 'binaural-pair' };
+    return { ...computeBinauralReadout([best.l], [best.r], correlation, sameToleranceHz), mode: 'binaural-pair' };
   }
-  return { ...computeBinauralReadout(pl, pr, correlation), mode: 'dominant' };
+  return { ...computeBinauralReadout(pl, pr, correlation, sameToleranceHz), mode: 'dominant' };
 }

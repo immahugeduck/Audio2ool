@@ -3,6 +3,7 @@
  */
 import { OctaveBandData, DistortionAnalysis, HarmonicOvertone, FrequencyWeighting } from '../types';
 import { formatFrequency, frequencyToNote } from './audioPresets';
+import { findSpectralPeaks } from '../dsp/peaks';
 
 // ISO 266 standard 31 1/3-octave center frequencies (Hz) from 20 Hz to 20 kHz
 export const ISO_1_3_OCTAVE_FREQUENCIES: number[] = [
@@ -474,6 +475,7 @@ export function analyzeTotalHarmonicDistortion(
       thdPlusNDb: -120,
       snrDb: 0,
       harmonics: [],
+      status: 'no-tone',
     };
   }
 
@@ -488,6 +490,41 @@ export function analyzeTotalHarmonicDistortion(
       const delta = 0.5 * ((a - c) / denom);
       refinedFundHz = Math.max(20, (fundBin + Math.max(-0.5, Math.min(0.5, delta))) * hzPerBin);
     }
+  }
+
+  // Real spectral peaks only (local maxima >= 10 dB above the local floor). Harmonics are listed
+  // only where such a peak exists, and THD is only defined when one tone dominates.
+  const realPeaks = findSpectralPeaks(floatFreqData, sampleRate, binCount * 2, {
+    minHz: 20,
+    maxHz: Math.min(20000, sampleRate / 2),
+    minProminenceDb: 10,
+    minDb: -90,
+    maxPeaks: 24,
+    maxBelowStrongestDb: 90,
+  });
+  const nearHz = (hz: number, target: number) => Math.abs(hz - target) <= Math.max(2 * hzPerBin, 0.01 * target);
+  const isHarmonicOfFund = (hz: number) => {
+    const h = Math.round(hz / refinedFundHz);
+    // Membership is not limited to the 8 orders we measure: a square wave's 9th, 11th... are still harmonics.
+    return h >= 1 && nearHz(hz, h * refinedFundHz);
+  };
+  const competing = realPeaks.some((p) => !isHarmonicOfFund(p.hz) && p.db > maxDb - 20);
+  if (competing) {
+    const noteInfoMulti = frequencyToNote(refinedFundHz);
+    return {
+      isToneDetected: false,
+      detected: false,
+      fundamentalHz: Math.round(refinedFundHz * 10) / 10,
+      fundamentalFormatted: formatFrequency(refinedFundHz),
+      fundamentalDb: Number(maxDb.toFixed(1)),
+      fundamentalNote: noteInfoMulti.formatted,
+      thdPercent: 0,
+      thdDb: -120,
+      thdPlusNDb: -120,
+      snrDb: 0,
+      harmonics: [],
+      status: 'multi-tone',
+    };
   }
 
   const fundPower = Math.pow(10, maxDb / 10);
@@ -535,8 +572,11 @@ export function analyzeTotalHarmonicDistortion(
       }
     }
 
+    // The level at the harmonic position always counts toward THD (it is the floor when no
+    // harmonic exists, so THD then reads near the analysis floor), but only real peaks are listed.
     const hPower = Math.pow(10, hMaxDb / 10);
     harmonicPowerSum += hPower;
+    if (!realPeaks.some((p) => nearHz(p.hz, harmTargetHz))) continue;
 
     const deltaDb = hMaxDb - maxDb;
     const powerPercent = fundPower > 0 ? (hPower / fundPower) * 100 : 0;
@@ -592,6 +632,7 @@ export function analyzeTotalHarmonicDistortion(
     thdPlusNDb: Number(thdPlusNDb.toFixed(1)),
     snrDb: Number(snrDb.toFixed(1)),
     harmonics,
+    status: 'single-tone',
   };
 }
 

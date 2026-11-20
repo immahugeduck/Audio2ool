@@ -17,6 +17,8 @@ interface EventAnomalyLogProps {
   metrics: AudioMetrics;
   currentTime: number;
   isPlaying: boolean;
+  /** Changes whenever the audio source changes; resets detection baselines. */
+  sourceKey?: string;
 }
 
 export interface AudioLogEvent {
@@ -35,6 +37,7 @@ export const EventAnomalyLog: React.FC<EventAnomalyLogProps> = ({
   metrics,
   currentTime,
   isPlaying,
+  sourceKey = '',
 }) => {
   const [events, setEvents] = useState<AudioLogEvent[]>([]);
   const [filterType, setFilterType] = useState<'all' | 'anomaly' | 'manual'>('all');
@@ -49,6 +52,15 @@ export const EventAnomalyLog: React.FC<EventAnomalyLogProps> = ({
   const lastAnomalyWallTimeRef = useRef<number>(0);
   const lastClipWallTimeRef = useRef<number>(0);
   const warmupUntilRef = useRef<number>(performance.now() + 1500);
+  // Baselines are seeded from the first real frame after a reset (new source, play start or seek),
+  // so a file that starts loud is not compared with a stale -65 dB baseline (false +47 dB spike).
+  const needsSeedRef = useRef<boolean>(true);
+  const lastTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    needsSeedRef.current = true;
+    warmupUntilRef.current = performance.now() + 1500;
+  }, [sourceKey, isPlaying]);
 
   const formatTimestamp = (totalSec: number): string => {
     if (totalSec <= 0.01) {
@@ -67,6 +79,22 @@ export const EventAnomalyLog: React.FC<EventAnomalyLogProps> = ({
     const now = performance.now();
     const curRms = metrics.rmsDb > -99 ? metrics.rmsDb : -80;
     const curPeak = metrics.peakDb > -99 ? metrics.peakDb : -80;
+
+    // Seek detection: playhead jumped backwards or more than 2 s forwards
+    const jumped = currentTime < lastTimeRef.current - 0.5 || currentTime > lastTimeRef.current + 2;
+    lastTimeRef.current = currentTime;
+    if (jumped) {
+      needsSeedRef.current = true;
+      warmupUntilRef.current = now + 1000;
+    }
+    if (needsSeedRef.current) {
+      smoothedRmsRef.current = curRms;
+      smoothedPeakRef.current = curPeak;
+      isArmedRef.current = true;
+      needsSeedRef.current = false;
+      return;
+    }
+
     const prevRms = smoothedRmsRef.current;
     const prevPeak = smoothedPeakRef.current;
 

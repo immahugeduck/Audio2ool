@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { AudioMetrics, NoiseBaselineProfile } from '../types';
+import { AudioMetrics, NoiseBaselineProfile, AudioSourceType } from '../types';
 import { getMagnitudeForRatio } from '../utils/frequencyTools';
 
 const SENSITIVITY_CONFIG = {
@@ -32,15 +32,19 @@ const SENSITIVITY_CONFIG = {
 export function useNoiseBaseline(
   getFrequencyData: () => Uint8Array,
   metrics: AudioMetrics,
-  isListening: boolean
+  isListening: boolean,
+  /** NC ratings are defined in calibrated dB SPL; only a live mic can even approximate them. */
+  sourceType: AudioSourceType = 'mic'
 ) {
+  const sourceTypeRef = useRef(sourceType);
+  sourceTypeRef.current = sourceType;
   const [profile, setProfile] = useState<NoiseBaselineProfile>({
     isCalibrated: false,
     calibrationProgress: 0,
     noiseFloorDb: -72,
     averageRmsDb: -70,
     snrDb: 0,
-    noiseCriteriaRating: 'NC-25 (Quiet Environment)',
+    noiseCriteriaRating: 'Uncalibrated',
     dominantNoiseBand: 'Ultra Quiet Baseline',
     bandFloors: new Array(32).fill(5),
     transientCount: 0,
@@ -242,6 +246,11 @@ export function useNoiseBaseline(
       } else if (estimatedFloorDb > -70) {
         ncRating = 'NC-28 (Quiet Home / Library)';
       }
+      // No SPL calibration exists, so NC can only be a rough mic estimate and is meaningless for
+      // files, samples, URLs or tab capture.
+      ncRating = sourceTypeRef.current === 'mic'
+        ? `Uncalibrated (≈${ncRating.split(' ')[0]} estimate from dBFS)`
+        : 'Uncalibrated (not a room measurement)';
 
       // Dominant noise band evaluation across log-spaced bands
       let dominant = 'Sub-Bass Ground Hum';

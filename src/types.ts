@@ -1,4 +1,7 @@
-export type VisualizationMode = 'bars' | 'curve' | 'oscilloscope' | 'waterfall' | 'spectrogram' | 'waveform' | 'hybrid';
+export type VisualizationMode = 'bars' | 'curve' | 'oscilloscope' | 'waterfall' | 'spectrogram' | 'waveform' | 'hybrid' | 'goniometer';
+
+/** Modes that plot time-domain data (no Hz axis / dB grid). */
+export const TIME_DOMAIN_MODES: VisualizationMode[] = ['oscilloscope', 'waveform', 'goniometer'];
 
 export type AudioSourceType = 'sample' | 'file' | 'mic' | 'url' | 'tab';
 
@@ -12,6 +15,19 @@ export const SOURCE_LABELS: Record<AudioSourceType, string> = {
   mic: 'MIC',
   url: 'URL STREAM',
   tab: 'TAB CAPTURE',
+};
+
+/** One set of band edges used by the engine, sidebar and audit report. */
+export const BANDS = {
+  subBass: { label: 'Sub-Bass', minHz: 20, maxHz: 60 },
+  bass: { label: 'Bass', minHz: 60, maxHz: 250 },
+  mid: { label: 'Midrange', minHz: 250, maxHz: 4000 },
+  treble: { label: 'Treble', minHz: 4000, maxHz: 20000 },
+} as const;
+
+export const formatBandRange = (b: { minHz: number; maxHz: number }) => {
+  const f = (hz: number) => (hz >= 1000 ? `${hz / 1000}k` : `${hz}`);
+  return `${f(b.minHz)}-${f(b.maxHz)} Hz`;
 };
 
 export type WorkspaceTab = 'live' | 'media' | 'tools' | 'recorder' | 'ai';
@@ -129,6 +145,11 @@ export interface DistortionAnalysis {
   thdPlusNDb: number; // e.g. -61.2 dB
   snrDb: number; // Signal-to-Noise Ratio (dB)
   harmonics: HarmonicOvertone[];
+  /**
+   * 'single-tone': one tone dominates, THD is meaningful. 'multi-tone': another non-harmonic
+   * peak is within 20 dB of the fundamental (music, chords, two-tone tests), THD is N/A.
+   */
+  status?: 'single-tone' | 'multi-tone' | 'no-tone';
 }
 
 export interface AudioMetrics {

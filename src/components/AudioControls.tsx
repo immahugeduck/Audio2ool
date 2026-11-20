@@ -39,6 +39,8 @@ export const AudioControls: React.FC<AudioControlsProps> = ({
     if (e.target.files && e.target.files[0]) {
       loadAudioFile(e.target.files[0]);
     }
+    // Allow choosing the same file again (onChange does not fire for an unchanged value).
+    e.target.value = '';
   };
 
   return (
